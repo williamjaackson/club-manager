@@ -1,3 +1,5 @@
 services:
   discord-bot:
     build: ./discord-bot
+    env_file:
+      - .env
