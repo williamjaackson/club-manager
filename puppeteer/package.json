@@ -12,5 +12,8 @@
   "devDependencies": {
     "puppeteer": "^24.4.0",
     "typescript": "^5.8.2"
+  },
+  "dependencies": {
+    "totp-generator": "^1.0.0"
   }
 }
