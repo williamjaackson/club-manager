@@ -1,5 +1,7 @@
+import { redisClient } from "./lib/redis";
 import puppeteer, { Cookie } from "puppeteer";
 import { TOTP } from "totp-generator";
+import config from "../config.json";
 
 // get a new copy of authentication cookies.
 async function newAuthCookies(
@@ -55,14 +57,25 @@ async function newAuthCookies(
 } 
 
 // get a cached/new copy of authentication cookies.
-export async function getAuthCookies() {
-    return newAuthCookies(
+export async function getAuthCookies(): Promise<Cookie[] | null> {
+    const cached_cookies = await redisClient.get('auth_cookies');
+    if (cached_cookies) {
+        return JSON.parse(cached_cookies);
+    }
+
+    const cookies = await newAuthCookies(
         process.env.STUDENT_ID!,
         process.env.PASSWORD!,
         process.env.OTP_ID!,
         process.env.OTP_SECRET!,
     ).catch((e) => {
         console.error(e);
-        return false;
+        return null;
     });
+
+    if (cookies) {
+        await redisClient.setEx('auth_cookies', config.cookieExpiry, JSON.stringify(cookies));
+    }
+
+    return cookies;
 }

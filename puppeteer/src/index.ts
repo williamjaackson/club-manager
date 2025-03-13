@@ -1,10 +1,14 @@
+import { redisClient } from "./lib/redis";
 import { getAuthCookies } from "./auth";
 
 async function main() {
-    const time = Date.now();
     const cookies = await getAuthCookies();
     console.log(cookies);
-    console.log(Date.now() - time);
 }
 
-main();
+redisClient.connect().catch(err => {
+    console.error('Failed to connect to Redis:', err);
+}).then(() => {
+    console.log('Connected to Redis');
+    main();
+});
