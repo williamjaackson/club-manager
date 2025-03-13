@@ -3,3 +3,11 @@ services:
     build: ./discord-bot
     env_file:
       - .env
+  puppeteer:
+    build: ./puppeteer
+    env_file:
+      - .env
+    cap_add:
+      - SYS_ADMIN
+    security_opt: 
+      - seccomp=unconfined

@@ -1,0 +1,2 @@
+# for some reason, this breaks puppeteer if its included
+package-lock.json
