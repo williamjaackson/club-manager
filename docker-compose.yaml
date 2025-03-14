@@ -9,14 +9,14 @@ services:
       - .env
     cap_add:
       - SYS_ADMIN
-    security_opt: 
+    security_opt:
       - seccomp=unconfined
     depends_on:
       - redis
   redis:
     image: redis:latest
     volumes:
-      - ./redis-data:/data
+      - ./data:/data
 
 volumes:
   redis-data:
