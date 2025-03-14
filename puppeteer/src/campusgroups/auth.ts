@@ -1,5 +1,5 @@
 import { redisClient } from "../lib/redis";
-import puppeteer, { Cookie } from "puppeteer";
+import puppeteer, { Cookie, Page } from "puppeteer";
 import { TOTP } from "totp-generator";
 import config from "../../config.json";
 
@@ -78,4 +78,13 @@ export async function getAuthCookies(): Promise<Cookie[] | null> {
     }
 
     return cookies;
+}
+
+export async function setAuthCookies(page: Page) {
+    const cookies = await getAuthCookies();
+    if (cookies) {
+        await page.browser().setCookie(...cookies);
+    }
+
+    return page;
 }
