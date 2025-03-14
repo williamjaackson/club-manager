@@ -25,7 +25,7 @@ async function newAuthCookies(
     const page    = await browser.newPage();
 
     // Navigate to Campus Groups login page
-    await page.goto('https://www.campusgroups.com/shibboleth/login?idp=griffith&school=griffith')
+    await page.goto('https://www.campusgroups.com/shibboleth/login?idp=griffith&school=griffith');
     await page.waitForSelector('#username');
     await page.type('#username', student_id);
     await page.type('#password', password);
@@ -37,7 +37,7 @@ async function newAuthCookies(
     await page.goto('https://authenticator.pingone.com.au/pingid/ppm/devices');
     await page.waitForSelector(`[data-id="${otp_id}"]`);
     await page.click(`[data-id="${otp_id}"]`);
-    await page.click('#device-submit')
+    await page.click('#device-submit');
     
     await waitForPage(page, 'https://authenticator.pingone.com.au/pingid/ppm/auth', 2);
     await page.waitForSelector('#otp');
@@ -46,7 +46,7 @@ async function newAuthCookies(
     const { otp } = TOTP.generate(otp_secret, { digits: 6 });
     
     await page.type('#otp', otp);
-    await page.click('input[type="submit"]')
+    await page.click('input[type="submit"]');
     
     await waitForPage(page, 'https://griffith.campusgroups.com/groups', 4);
     
@@ -54,7 +54,7 @@ async function newAuthCookies(
     const browser_cookies = await browser.cookies();
     await browser.close();
 
-    return browser_cookies.filter(cookie => cookie.domain == 'griffith.campusgroups.com')
+    return browser_cookies.filter(cookie => cookie.domain == 'griffith.campusgroups.com');
 } 
 
 async function updateAuthCookies(): Promise<Cookie[]> {
