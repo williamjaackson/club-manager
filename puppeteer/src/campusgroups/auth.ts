@@ -2,23 +2,7 @@ import { redisClient } from "../lib/redis";
 import puppeteer, { Cookie, Page } from "puppeteer";
 import { TOTP } from "totp-generator";
 import config from "../../config.json";
-
-async function waitForPage(
-  page: Page,
-  expectedUrl: string,
-  navigationCount: number = 1,
-) {
-  for (let i = 0; i < navigationCount; i++) {
-    await page.waitForNavigation().catch((e) => {
-      console.log(
-        `Failed to navigate to ${expectedUrl}, ${i} of ${navigationCount}, ${page.url()}, ${e}`,
-      );
-    });
-  }
-  if (page.url() !== expectedUrl) {
-    throw new Error(`Failed to navigate to ${expectedUrl}`);
-  }
-}
+import { waitForPage } from "./navigation";
 
 // get a new copy of authentication cookies.
 async function newAuthCookies(
@@ -64,14 +48,15 @@ async function newAuthCookies(
   await page.type("#otp", otp);
   await page.click('input[type="submit"]');
 
-  await waitForPage(page, "https://griffith.campusgroups.com/groups", 4);
+  await waitForPage(page, `${config.URL.campusGroups}/groups`, 4);
 
   // Get cookies
   const browser_cookies = await browser.cookies();
   await browser.close();
 
   return browser_cookies.filter(
-    (cookie) => cookie.domain == "griffith.campusgroups.com",
+    (cookie) =>
+      cookie.domain == config.URL.campusGroups.replace("https://", ""),
   );
 }
 
@@ -113,11 +98,11 @@ export async function getAuthCookies(): Promise<Cookie[] | null> {
   return JSON.parse(cached_cookies.toString());
 }
 
-export async function setAuthCookies(page: Page) {
+export async function setAuthCookies(page: Page): Promise<Cookie[] | null> {
   const cookies = await getAuthCookies();
   if (cookies) {
     await page.browser().setCookie(...cookies);
   }
 
-  return page;
+  return cookies;
 }

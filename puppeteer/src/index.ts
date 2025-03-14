@@ -1,14 +1,16 @@
 import { redisClient } from "./lib/redis";
 import { setAuthCookies } from "./campusgroups/auth";
 import puppeteer from "puppeteer";
+import { currentMemberList } from "./campusgroups/members";
 
 async function main() {
   const browser = await puppeteer.launch();
 
   let page = await browser.newPage();
-  page = await setAuthCookies(page);
+  await setAuthCookies(page);
+  console.log(await currentMemberList(page, "24237"));
 
-  console.log(await browser.cookies());
+  // console.log(await page.browser().cookies());
 }
 
 redisClient

@@ -1,3 +1,6 @@
 {
-    "cookieExpiry": 21600
+  "cookieExpiry": 21600,
+  "URL": {
+    "campusGroups": "https://griffith.campusgroups.com"
+  }
 }
