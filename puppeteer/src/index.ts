@@ -1,5 +1,5 @@
 import { redisClient } from "./lib/redis";
-import { getAuthCookies } from "./auth";
+import { getAuthCookies } from "./campusgroups/auth";
 
 async function main() {
     const cookies = await getAuthCookies();

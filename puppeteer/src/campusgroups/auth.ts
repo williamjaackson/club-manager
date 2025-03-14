@@ -1,7 +1,7 @@
-import { redisClient } from "./lib/redis";
+import { redisClient } from "../lib/redis";
 import puppeteer, { Cookie } from "puppeteer";
 import { TOTP } from "totp-generator";
-import config from "../config.json";
+import config from "../../config.json";
 
 // get a new copy of authentication cookies.
 async function newAuthCookies(
