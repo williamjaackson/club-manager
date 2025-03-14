@@ -58,7 +58,7 @@ async function newAuthCookies(
 
 // get a cached/new copy of authentication cookies.
 export async function getAuthCookies(): Promise<Cookie[] | null> {
-    const cached_cookies = await redisClient.get('auth_cookies');
+    const cached_cookies = await redisClient.get('cache:auth-cookies');
     if (cached_cookies) {
         return JSON.parse(cached_cookies);
     }
@@ -74,7 +74,7 @@ export async function getAuthCookies(): Promise<Cookie[] | null> {
     });
 
     if (cookies) {
-        await redisClient.setEx('auth_cookies', config.cookieExpiry, JSON.stringify(cookies));
+        await redisClient.setEx('cache:auth-cookies', config.cookieExpiry, JSON.stringify(cookies));
     }
 
     return cookies;
