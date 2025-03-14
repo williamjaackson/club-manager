@@ -10,6 +10,7 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "devDependencies": {
+    "prettier": "^3.5.3",
     "puppeteer": "^24.4.0",
     "typescript": "^5.8.2"
   },
