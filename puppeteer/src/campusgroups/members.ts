@@ -9,7 +9,7 @@ import { parse } from "csv-parse/sync";
 export async function updateMemberList(
   page: Page,
   clubId: string,
-): Promise<void> {
+): Promise<string[]> {
   let cookies = await page.browser().cookies();
   if (cookies.length === 0) {
     cookies = (await setAuthCookies(page)) ?? [];
@@ -36,12 +36,25 @@ export async function updateMemberList(
     skip_empty_lines: true,
   });
 
+  // do I need to track new members? ON JOIN event from campus?.
+  // YES. connect a member automatically to a club.
+  const newUsers = [];
+
   // Insert records into database
   for (const record of records) {
     // console.log(record);
     const studentNumber = /(s\d{,8})\@griffithuni\.edu\.au/.exec(
       record["Email"],
     )?.[1];
+
+    const [existingUser] = await sql`
+      SELECT * FROM campus_users
+      WHERE campus_user_id = ${record["User Identifier"]}
+    `;
+
+    if (!existingUser) {
+      newUsers.push(record["User Identifier"]);
+    }
 
     await sql`
       INSERT INTO campus_users (
@@ -73,4 +86,6 @@ export async function updateMemberList(
       ON CONFLICT (campus_member_id) DO NOTHING
     `;
   }
+
+  return newUsers;
 }
