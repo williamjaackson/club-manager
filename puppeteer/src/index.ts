@@ -8,6 +8,7 @@ async function main() {
 
   let page = await browser.newPage();
   await setAuthCookies(page);
+  await updateMemberList(page, "24236");
   await updateMemberList(page, "24237");
 
   await browser.close();

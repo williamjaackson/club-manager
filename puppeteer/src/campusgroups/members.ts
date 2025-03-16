@@ -38,6 +38,7 @@ export async function updateMemberList(
 
   // Insert records into database
   for (const record of records) {
+    // console.log(record);
     const studentNumber = /(s\d{,8})\@griffithuni\.edu\.au/.exec(
       record["Email"],
     )?.[1];
@@ -56,10 +57,20 @@ export async function updateMemberList(
         ${record["Last Name"]},
         ${record["Email"]}
       )
-      ON CONFLICT (campus_user_id) DO UPDATE SET
-        first_name = EXCLUDED.first_name,
-        last_name = EXCLUDED.last_name,
-        campus_email = EXCLUDED.campus_email
+      ON CONFLICT (campus_user_id) DO NOTHING
+    `;
+
+    await sql`
+      INSERT INTO campus_members (
+        campus_user_id,
+        campus_member_id,
+        club_id
+      ) VALUES (
+        ${record["User Identifier"]},
+        ${record["Member Identifier"]},
+        ${clubId}
+      )
+      ON CONFLICT (campus_member_id) DO NOTHING
     `;
   }
 }
