@@ -37,8 +37,12 @@ export async function updateMemberList(
   });
 
   // do I need to track new members? ON JOIN event from campus?.
-  // YES. connect a member automatically to a club.
+  // YES. connect a member automatically to a club. should I send a new event for every club join, or just on the first club join?
   const newUsers = [];
+  const existingMembers = await sql`
+    SELECT * FROM campus_members
+    WHERE club_id = ${clubId}
+  `;
 
   // Insert records into database
   for (const record of records) {
@@ -47,12 +51,11 @@ export async function updateMemberList(
       record["Email"],
     )?.[1];
 
-    const [existingUser] = await sql`
-      SELECT * FROM campus_users
-      WHERE campus_user_id = ${record["User Identifier"]}
-    `;
+    const existingMember = existingMembers.find(
+      (member) => member.campus_member_id === record["Member Identifier"],
+    );
 
-    if (!existingUser) {
+    if (!existingMember) {
       newUsers.push(record["User Identifier"]);
     }
 
