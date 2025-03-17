@@ -43,7 +43,7 @@ export async function updateMemberList(
   // Insert records into database
   for (const record of records) {
     // console.log(record);
-    const studentNumber = /(s\d{,8})\@griffithuni\.edu\.au/.exec(
+    const studentNumber = /(s\d{7})\@griffithuni\.edu\.au/.exec(
       record["Email"],
     )?.[1];
 
