@@ -46,35 +46,38 @@ export async function updateMemberList(
 
   // Insert records into database
   for (const record of records) {
-    // console.log(record);
+    const existingMember = existingMembers.find(
+      (member) =>
+        member.campus_member_id === parseInt(record["Member Identifier"]),
+    );
+
+    if (existingMember) {
+      existingMembers.splice(existingMembers.indexOf(existingMember), 1);
+      continue;
+    } else {
+      newUsers.push(record["User Identifier"]);
+    }
+
     const studentNumber = /(s\d{7})\@griffithuni\.edu\.au/.exec(
       record["Email"],
     )?.[1];
 
-    const existingMember = existingMembers.find(
-      (member) => member.campus_member_id === record["Member Identifier"],
-    );
-
-    if (!existingMember) {
-      newUsers.push(record["User Identifier"]);
-
-      await sql`
-        INSERT INTO campus_users (
-          campus_user_id,
-          student_number,
-          first_name,
-          last_name,
-          campus_email
-        ) VALUES (
-          ${record["User Identifier"]},
-          ${studentNumber},
-          ${record["First Name"]},
-          ${record["Last Name"]},
-          ${record["Email"]}
-        )
-        ON CONFLICT (campus_user_id) DO NOTHING
-      `;
-    }
+    await sql`
+      INSERT INTO campus_users (
+        campus_user_id,
+        student_number,
+        first_name,
+        last_name,
+        campus_email
+      ) VALUES (
+        ${record["User Identifier"]},
+        ${studentNumber},
+        ${record["First Name"]},
+        ${record["Last Name"]},
+        ${record["Email"]}
+      )
+      ON CONFLICT (campus_user_id) DO NOTHING
+    `;
 
     await sql`
       INSERT INTO campus_members (
@@ -87,6 +90,17 @@ export async function updateMemberList(
         ${clubId}
       )
       ON CONFLICT (campus_member_id) DO NOTHING
+    `;
+  }
+
+  for (const existingMemberIndex in existingMembers) {
+    // all of these people have left the campus_groups since last time we updated the list
+    const existingMember = existingMembers[existingMemberIndex];
+
+    // remove from database
+    await sql`
+      DELETE FROM campus_members
+      WHERE campus_member_id = ${existingMember.campus_member_id}
     `;
   }
 
