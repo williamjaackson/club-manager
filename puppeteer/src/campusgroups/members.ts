@@ -5,6 +5,7 @@ import axios from "axios";
 import { setAuthCookies } from "./auth";
 import { sql } from "../lib/database";
 import { parse } from "csv-parse/sync";
+import { redisClient } from "lib/redis";
 
 export async function updateMemberList(
   page: Page,
@@ -91,6 +92,11 @@ export async function updateMemberList(
       )
       ON CONFLICT (campus_member_id) DO NOTHING
     `;
+
+    await redisClient.publish(
+      "event:member_join",
+      `${record["User Identifier"]}:${clubId}`,
+    );
   }
 
   for (const existingMember of existingMembers) {
@@ -101,6 +107,10 @@ export async function updateMemberList(
       DELETE FROM campus_members
       WHERE campus_member_id = ${existingMember.campus_member_id}
     `;
+    await redisClient.publish(
+      "event:member_leave",
+      `${existingMember.campus_user_id}:${clubId}`,
+    );
   }
 
   const oldMembers = existingMembers.map((member) => member.campus_member_id);
