@@ -23,26 +23,18 @@ async function newAuthCookies(
   await page.type("#password", password);
   await page.keyboard.press("Enter");
 
-  await waitForPage(
-    page,
-    "https://authenticator.pingone.com.au/pingid/ppm/auth",
-    3,
-  );
+  await waitForPage(page, `${config.URL.pingOne}/auth`, 3);
 
   // move to the devices page.
-  await page.goto("https://authenticator.pingone.com.au/pingid/ppm/devices");
+  await page.goto(`${config.URL.pingOne}/devices`);
   await page.waitForSelector(`[data-id="${otp_id}"]`);
   await page.click(`[data-id="${otp_id}"]`);
   await page.click("#device-submit");
 
-  await waitForPage(
-    page,
-    "https://authenticator.pingone.com.au/pingid/ppm/auth",
-    2,
-  );
+  await waitForPage(page, `${config.URL.pingOne}/auth`, 2);
   await page.waitForSelector("#otp");
 
-  // // Enter PingID OTP
+  // Enter PingID OTP
   const { otp } = TOTP.generate(otp_secret, { digits: 6 });
 
   await page.type("#otp", otp);

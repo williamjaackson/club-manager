@@ -1,6 +1,7 @@
 {
   "cookieExpiry": 21600,
   "URL": {
-    "campusGroups": "https://griffith.campusgroups.com"
+    "campusGroups": "https://griffith.campusgroups.com",
+    "pingOne": "https://authenticator.pingone.com.au/pingid/ppm"
   }
 }
