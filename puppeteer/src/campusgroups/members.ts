@@ -9,7 +9,7 @@ import { parse } from "csv-parse/sync";
 export async function updateMemberList(
   page: Page,
   clubId: string,
-): Promise<string[]> {
+): Promise<[string[], string[]]> {
   let cookies = await page.browser().cookies();
   if (cookies.length === 0) {
     cookies = (await setAuthCookies(page)) ?? [];
@@ -38,7 +38,7 @@ export async function updateMemberList(
 
   // do I need to track new members? ON JOIN event from campus?.
   // YES. connect a member automatically to a club. should I send a new event for every club join, or just on the first club join?
-  const newUsers = [];
+  const newMembers = [];
   const existingMembers = await sql`
     SELECT * FROM campus_members
     WHERE club_id = ${clubId}
@@ -55,7 +55,7 @@ export async function updateMemberList(
       existingMembers.splice(existingMembers.indexOf(existingMember), 1);
       continue;
     } else {
-      newUsers.push(record["User Identifier"]);
+      newMembers.push(record["Member Identifier"]);
     }
 
     const studentNumber = /(s\d{7})\@griffithuni\.edu\.au/.exec(
@@ -93,9 +93,8 @@ export async function updateMemberList(
     `;
   }
 
-  for (const existingMemberIndex in existingMembers) {
+  for (const existingMember of existingMembers) {
     // all of these people have left the campus_groups since last time we updated the list
-    const existingMember = existingMembers[existingMemberIndex];
 
     // remove from database
     await sql`
@@ -104,5 +103,7 @@ export async function updateMemberList(
     `;
   }
 
-  return newUsers;
+  const oldMembers = existingMembers.map((member) => member.campus_member_id);
+
+  return [newMembers, oldMembers];
 }
