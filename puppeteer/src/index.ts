@@ -7,6 +7,7 @@ async function main() {
   const browser = await puppeteer.launch();
 
   let page = await browser.newPage();
+
   await setAuthCookies(page);
   await updateMemberList(page, "24236");
   await updateMemberList(page, "24237");
