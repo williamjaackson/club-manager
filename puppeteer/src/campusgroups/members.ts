@@ -57,24 +57,24 @@ export async function updateMemberList(
 
     if (!existingMember) {
       newUsers.push(record["User Identifier"]);
-    }
 
-    await sql`
-      INSERT INTO campus_users (
-        campus_user_id,
-        student_number,
-        first_name,
-        last_name,
-        campus_email
-      ) VALUES (
-        ${record["User Identifier"]},
-        ${studentNumber},
-        ${record["First Name"]},
-        ${record["Last Name"]},
-        ${record["Email"]}
-      )
-      ON CONFLICT (campus_user_id) DO NOTHING
-    `;
+      await sql`
+        INSERT INTO campus_users (
+          campus_user_id,
+          student_number,
+          first_name,
+          last_name,
+          campus_email
+        ) VALUES (
+          ${record["User Identifier"]},
+          ${studentNumber},
+          ${record["First Name"]},
+          ${record["Last Name"]},
+          ${record["Email"]}
+        )
+        ON CONFLICT (campus_user_id) DO NOTHING
+      `;
+    }
 
     await sql`
       INSERT INTO campus_members (
