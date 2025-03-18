@@ -1,8 +1,10 @@
 services:
-  # discord-bot:
-  #   build: ./discord-bot
-  #   env_file:
-  #     - .env
+  discord-bot:
+    build: ./discord-bot
+    env_file:
+      - .env
+    depends_on:
+      - redis
   puppeteer:
     build: ./puppeteer
     env_file:
