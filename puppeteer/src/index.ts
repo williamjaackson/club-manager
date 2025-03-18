@@ -1,17 +1,21 @@
 import { redisClient } from "./lib/redis";
-import { setAuthCookies } from "./campusgroups/auth";
+import { getAuthCookies, setAuthCookies } from "./campusgroups/auth";
 import puppeteer from "puppeteer";
 import { updateMemberList } from "./campusgroups/members";
 
 async function main() {
   const browser = await puppeteer.launch();
 
-  let page = await browser.newPage();
+  await getAuthCookies();
 
-  await setAuthCookies(page);
-  await updateMemberList(page, "24236");
-  await updateMemberList(page, "24237");
+  async function updateList(clubId: string) {
+    let page = await browser.newPage();
+    await setAuthCookies(page);
+    await updateMemberList(page, clubId);
+    await page.close();
+  }
 
+  await Promise.all([updateList("24236"), updateList("24237")]);
   await browser.close();
 }
 
