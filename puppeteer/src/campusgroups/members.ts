@@ -5,7 +5,7 @@ import axios from "axios";
 import { setAuthCookies } from "./auth";
 import { sql } from "../lib/database";
 import { parse } from "csv-parse/sync";
-import { redisClient } from "lib/redis";
+import { redisClient } from "../lib/redis";
 
 export async function updateMemberList(
   page: Page,
