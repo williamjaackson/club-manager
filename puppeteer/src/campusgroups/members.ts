@@ -94,7 +94,7 @@ export async function updateMemberList(
     `;
 
     await redisClient.publish(
-      "event:member_join",
+      "member:join",
       `${record["User Identifier"]}:${clubId}`,
     );
   }
@@ -108,7 +108,7 @@ export async function updateMemberList(
       WHERE campus_member_id = ${existingMember.campus_member_id}
     `;
     await redisClient.publish(
-      "event:member_leave",
+      "member:leave",
       `${existingMember.campus_user_id}:${clubId}`,
     );
   }
