@@ -8,14 +8,14 @@ async function main() {
 
   await getAuthCookies();
 
-  async function updateList(clubId: string) {
-    let page = await browser.newPage();
-    await setAuthCookies(page);
-    await updateMemberList(page, clubId);
-    await page.close();
-  }
+  let page = await browser.newPage();
 
-  await Promise.all([updateList("24236"), updateList("24237")]);
+  await setAuthCookies(page);
+  await updateMemberList(page, "24236");
+  await updateMemberList(page, "24237");
+
+  await page.close();
+
   await browser.close();
 }
 
