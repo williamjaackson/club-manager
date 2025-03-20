@@ -1,6 +1,6 @@
 import { redisClient } from "./lib/redis";
 import { newSession, runGriffithAuthFlow } from "./campusgroups/auth";
-import puppeteer, { BrowserContextOptions } from "puppeteer";
+import puppeteer from "puppeteer";
 import { updateMemberList } from "./campusgroups/members";
 
 async function main() {
@@ -13,6 +13,8 @@ async function main() {
 
     const page = await context.newPage();
     await newSession(page);
+
+    await updateMemberList(page, clubId);
 
     await page.close();
   }

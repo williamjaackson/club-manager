@@ -1,4 +1,4 @@
-import { BrowserContext, Page } from "puppeteer";
+import { Page } from "puppeteer";
 import { officerView } from "./club";
 import config from "../../config.json";
 import axios from "axios";
@@ -10,7 +10,6 @@ import { redisClient } from "../lib/redis";
 export async function updateMemberList(
   page: Page,
   clubId: string,
-  context: BrowserContext,
 ): Promise<[string[], string[]]> {
   // go to the club officer page
   await officerView(page, clubId);
@@ -18,7 +17,7 @@ export async function updateMemberList(
   // go to the member tab
   await page.goto(`${config.URL.campusGroups}/members_list?status=members`);
 
-  let cookies = await context.cookies();
+  let cookies = await page.browserContext().cookies();
   if (cookies.length === 0) {
     throw new Error("No cookies found");
     // cookies = (await setAuthCookies(page)) ?? [];
