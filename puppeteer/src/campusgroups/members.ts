@@ -47,6 +47,15 @@ export async function updateMemberList(
     WHERE club_id = ${clubId}
   `;
 
+  if (
+    Math.abs(records.length - existingMembers.length) >
+    existingMembers.length * 0.1
+  ) {
+    throw new Error(
+      "Number of records is not within 10% of the existing members. Likely: failed to fetch the correct list.",
+    );
+  }
+
   // Insert records into database
   for (const record of records) {
     const existingMember = existingMembers.find(
