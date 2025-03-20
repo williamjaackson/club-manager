@@ -10,4 +10,9 @@ export async function redisEventHandler(client: Client) {
     // if (!member) return;
     console.log(campus_user_id, club_id);
   });
+
+  redisClient.subscribe("member:leave", (message) => {
+    const { campus_user_id, club_id } = JSON.parse(message);
+    console.log(campus_user_id, club_id);
+  });
 }

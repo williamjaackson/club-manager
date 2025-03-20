@@ -5,48 +5,21 @@ import { updateMemberList } from "./campusgroups/members";
 
 async function main() {
   const browser = await puppeteer.launch();
-  // run Griffith Auth Flow
   await runGriffithAuthFlow(browser);
 
-  // get new session
-  const context1 = await browser.createBrowserContext();
-  await context1.setCookie(...(await browser.cookies()));
-  const page1 = await context1.newPage();
-  await newSession(page1);
+  const context = await browser.createBrowserContext();
+  await context.setCookie(...(await browser.cookies()));
 
-  const context2 = await browser.createBrowserContext();
-  await context2.setCookie(...(await browser.cookies()));
-  const page2 = await context2.newPage();
-  await newSession(page2);
+  const page = await context.newPage();
+  await newSession(page);
 
-  // find the two session tokens
-  const cookies1 = await context1.cookies();
-  const cookies2 = await context2.cookies();
+  await updateMemberList(page, "24236", context);
+  await updateMemberList(page, "24237", context);
 
-  const cookie1 = cookies1.find(
-    (cookie) => cookie.name === "CG.SessionID",
-  )?.value;
-  const cookie2 = cookies2.find(
-    (cookie) => cookie.name === "CG.SessionID",
-  )?.value;
+  await page.close();
+  await browser.close();
 
-  console.log(cookie1, cookie2);
-
-  // console.log(await browser.cookies());
-
-  // get new CampusGroups session.
-
-  // await getAuthCookies();
-
-  // let page = await browser.newPage();
-
-  // await setAuthCookies(page);
-  // await updateMemberList(page, "24236");
-  // await updateMemberList(page, "24237");
-
-  // await page.close();
-
-  // await browser.close();
+  console.log("done");
 }
 
 redisClient
