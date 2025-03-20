@@ -7,16 +7,21 @@ async function main() {
   const browser = await puppeteer.launch();
   await runGriffithAuthFlow(browser);
 
-  const context = await browser.createBrowserContext();
-  await context.setCookie(...(await browser.cookies()));
+  async function updateClubMemberList(clubId: string) {
+    const context = await browser.createBrowserContext();
+    await context.setCookie(...(await browser.cookies()));
 
-  const page = await context.newPage();
-  await newSession(page);
+    const page = await context.newPage();
+    await newSession(page);
 
-  await updateMemberList(page, "24236", context);
-  await updateMemberList(page, "24237", context);
+    await page.close();
+  }
 
-  await page.close();
+  await Promise.all([
+    updateClubMemberList("24236"),
+    updateClubMemberList("24237"),
+  ]);
+
   await browser.close();
 
   console.log("done");
