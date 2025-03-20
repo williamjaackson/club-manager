@@ -93,7 +93,14 @@ export async function updateMemberList(
       ON CONFLICT (campus_member_id) DO NOTHING
     `;
 
-    await redisClient.publish("member:join", `${record["Member Identifier"]}`);
+    await redisClient.publish(
+      "member:join",
+      JSON.stringify({
+        campus_user_id: record["User Identifier"],
+        campus_member_id: record["Member Identifier"],
+        club_id: clubId,
+      }),
+    );
   }
 
   for (const existingMember of existingMembers) {
@@ -106,7 +113,11 @@ export async function updateMemberList(
     `;
     await redisClient.publish(
       "member:leave",
-      `${existingMember.campus_member_id}`,
+      JSON.stringify({
+        campus_user_id: existingMember.campus_user_id,
+        campus_member_id: existingMember.campus_member_id,
+        club_id: clubId,
+      }),
     );
   }
 
