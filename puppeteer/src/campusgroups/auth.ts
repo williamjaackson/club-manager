@@ -1,17 +1,18 @@
 import { redisClient } from "../lib/redis";
-import puppeteer, { Cookie, Page } from "puppeteer";
+import puppeteer, { Browser, Cookie, Page } from "puppeteer";
 import { TOTP } from "totp-generator";
 import config from "../../config.json";
 import { waitForPage } from "./navigation";
 
 // get a new copy of authentication cookies.
-async function newAuthCookies(
-  student_id: string,
-  password: string,
-  otp_id: string,
-  otp_secret: string,
+export async function runGriffithAuthFlow(
+  browser: Browser,
+
+  student_id: string = process.env.STUDENT_ID!,
+  password: string = process.env.PASSWORD!,
+  otp_id: string = process.env.OTP_ID!,
+  otp_secret: string = process.env.OTP_SECRET!,
 ): Promise<Cookie[]> {
-  const browser = await puppeteer.launch();
   const page = await browser.newPage();
 
   // Navigate to Campus Groups login page
@@ -44,57 +45,74 @@ async function newAuthCookies(
 
   // Get cookies
   const browser_cookies = await browser.cookies();
-  await browser.close();
 
-  return browser_cookies.filter(
-    (cookie) =>
-      cookie.domain == config.URL.campusGroups.replace("https://", ""),
-  );
-}
-
-async function updateAuthCookies(): Promise<Cookie[]> {
-  // set the cache to alive.
-  // if another process requests the cache while this one is updating, it will return the OLD cached cookies.
-  // once this process is finished, it will finish updating the cache.
-  await redisClient.setEx("cache:auth-cookies:alive", config.cookieExpiry, "1");
-
-  const cookies = await newAuthCookies(
-    process.env.STUDENT_ID!,
-    process.env.PASSWORD!,
-    process.env.OTP_ID!,
-    process.env.OTP_SECRET!,
+  // remove all campusgroups.com cookies
+  const filtered_cookies = browser_cookies.filter(
+    (cookie) => !cookie.domain.includes("campusgroups.com"),
   );
 
-  await redisClient.set("cache:auth-cookies", JSON.stringify(cookies));
-  return cookies;
+  // clear all cookies from the browser
+  await browser.deleteCookie(...browser_cookies);
+
+  // set the filtered cookies
+  await browser.setCookie(...filtered_cookies);
+
+  return filtered_cookies;
 }
 
-// get a cached/new copy of authentication cookies.
-export async function getAuthCookies(): Promise<Cookie[] | null> {
-  let [cached_cookies, alive] = await redisClient
-    .multi()
-    .get("cache:auth-cookies")
-    .get("cache:auth-cookies:alive")
-    .exec();
-
-  // if no cache exists, update and return the updated cookies.
-  if (!cached_cookies) {
-    return await updateAuthCookies();
-  }
-
-  // if the cache is expired, update in the background and return the cached cookies.
-  if (!alive) {
-    updateAuthCookies();
-  }
-
-  return JSON.parse(cached_cookies.toString());
+export async function newSession(page: Page): Promise<void> {
+  console.log("Running Griffith Auth Flow");
+  await page.goto(
+    "https://www.campusgroups.com/shibboleth/login?idp=griffith&school=griffith",
+  );
+  await waitForPage(page, `${config.URL.campusGroups}/groups`, 2);
+  // const cookies = await runGriffithAuthFlow(page.browser());
+  // await page.setCookie(...cookies);
 }
 
-export async function setAuthCookies(page: Page): Promise<Cookie[] | null> {
-  const cookies = await getAuthCookies();
-  if (cookies) {
-    await page.browser().setCookie(...cookies);
-  }
+// async function updateAuthCookies(): Promise<Cookie[]> {
+//   // set the cache to alive.
+//   // if another process requests the cache while this one is updating, it will return the OLD cached cookies.
+//   // once this process is finished, it will finish updating the cache.
+//   await redisClient.setEx("cache:auth-cookies:alive", config.cookieExpiry, "1");
 
-  return cookies;
-}
+//   const cookies = await runGriffithAuthFlow(
+//     process.env.STUDENT_ID!,
+//     process.env.PASSWORD!,
+//     process.env.OTP_ID!,
+//     process.env.OTP_SECRET!,
+//   );
+
+//   await redisClient.set("cache:auth-cookies", JSON.stringify(cookies));
+//   return cookies;
+// }
+
+// // get a cached/new copy of authentication cookies.
+// export async function getAuthCookies(): Promise<Cookie[] | null> {
+//   let [cached_cookies, alive] = await redisClient
+//     .multi()
+//     .get("cache:auth-cookies")
+//     .get("cache:auth-cookies:alive")
+//     .exec();
+
+//   // if no cache exists, update and return the updated cookies.
+//   if (!cached_cookies) {
+//     return await updateAuthCookies();
+//   }
+
+//   // if the cache is expired, update in the background and return the cached cookies.
+//   if (!alive) {
+//     updateAuthCookies();
+//   }
+
+//   return JSON.parse(cached_cookies.toString());
+// }
+
+// export async function setAuthCookies(page: Page): Promise<Cookie[] | null> {
+//   const cookies = await getAuthCookies();
+//   if (cookies) {
+//     await page.browser().setCookie(...cookies);
+//   }
+
+//   return cookies;
+// }

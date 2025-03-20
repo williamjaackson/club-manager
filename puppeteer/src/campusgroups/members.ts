@@ -2,7 +2,7 @@ import { Page } from "puppeteer";
 import { officerView } from "./club";
 import config from "../../config.json";
 import axios from "axios";
-import { setAuthCookies } from "./auth";
+// import { setAuthCookies } from "./auth";
 import { sql } from "../lib/database";
 import { parse } from "csv-parse/sync";
 import { redisClient } from "../lib/redis";
@@ -13,7 +13,8 @@ export async function updateMemberList(
 ): Promise<[string[], string[]]> {
   let cookies = await page.browser().cookies();
   if (cookies.length === 0) {
-    cookies = (await setAuthCookies(page)) ?? [];
+    throw new Error("No cookies found");
+    // cookies = (await setAuthCookies(page)) ?? [];
   }
 
   // go to the club officer page
