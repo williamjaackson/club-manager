@@ -1,12 +1,13 @@
 import { sql } from "./lib/database";
 import { redisClient } from "./lib/redis";
 import { Client } from "discord.js";
+import config from "../config.json";
 
 export async function redisEventHandler(client: Client) {
   redisClient.subscribe("member:join", async (message) => {
     const { campus_user_id, club_id } = JSON.parse(message);
 
-    const clubArea = club_id === 24236 ? "Brisbane/Online" : "Gold Coast";
+    const clubArea = club_id === "24236" ? "Brisbane/Online" : "Gold Coast";
 
     const [discordUserRecord] = await sql`
       SELECT * FROM discord_users
@@ -40,17 +41,32 @@ ${campusUserRecord.first_name} ${campusUserRecord.last_name}
 \`\`\`
 -# This will only ever be viewable by verified students, or staff members.`);
 
-    // const guild = client.guilds.cache.get(club_id);
-    // if (!guild) {
-    //   console.log("Guild not found");
-    //   return;
-    // }
+    const guild = await client.guilds.fetch(config.guildId);
+    const role = await guild.roles.fetch(config.roleId);
+
+    if (!guild || !role) {
+      console.log("Guild or role not found");
+      return;
+    }
+
+    const discordMember = await guild.members.fetch(discordUser.id);
+
+    await discordMember.roles.add(role);
 
     console.log(campus_user_id, club_id);
   });
 
   redisClient.subscribe("member:leave", async (message) => {
+    // when the user leaves, check if the old member has the role, if so, remove it.
     const { campus_user_id, club_id } = JSON.parse(message);
-    console.log(campus_user_id, club_id);
+
+    // const guild = await client.guilds.fetch(config.guildId);
+    // const role = await guild.roles.fetch(config.roleId);
+
+    // if (!guild || !role) {
+    //   console.log("Guild or role not found");
+    //   return;
+    // const { campus_user_id, club_id } = JSON.parse(message);
+    // console.log(campus_user_id, club_id);
   });
 }
