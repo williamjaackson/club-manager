@@ -21,7 +21,12 @@ export async function redisEventHandler(client: Client) {
     `;
 
     if (!discordUserRecord) {
-      console.log("Campus user does not have a discord account.");
+      console.log(
+        "member:join",
+        campus_user_id,
+        club_id,
+        "Campus user does not have a discord account."
+      );
       return;
     }
 
@@ -63,13 +68,43 @@ ${campusUserRecord.first_name} ${campusUserRecord.last_name}
     // when the user leaves, check if the old member has the role, if so, remove it.
     const { campus_user_id, club_id } = JSON.parse(message);
 
-    // const guild = await client.guilds.fetch(config.guildId);
-    // const role = await guild.roles.fetch(config.roleId);
+    const [discordUserRecord] = await sql`
+        SELECT * FROM discord_users
+        JOIN campus_users ON discord_users.student_number = campus_users.student_number
+        WHERE campus_users.campus_user_id = ${campus_user_id}
+      `;
 
-    // if (!guild || !role) {
-    //   console.log("Guild or role not found");
-    //   return;
-    // const { campus_user_id, club_id } = JSON.parse(message);
-    // console.log(campus_user_id, club_id);
+    if (!discordUserRecord) {
+      console.log(
+        "member:leave",
+        club_id,
+        "Campus user does not have a discord account."
+      );
+      return;
+    }
+
+    const guild = await client.guilds.fetch(config.guildId);
+    const role = await guild.roles.fetch(config.roleId);
+
+    if (!guild || !role) {
+      console.log("Guild or role not found");
+      return;
+    }
+
+    const discordMember = await guild.members.fetch(
+      discordUserRecord.discord_user_id
+    );
+
+    if (!discordMember) {
+      console.log("Discord member not found");
+      return;
+    }
+
+    if (discordMember.id !== "817515772317925407") {
+      console.log("TESTING, WILL NOT DM");
+      return;
+    }
+
+    await discordMember.roles.remove(role);
   });
 }
