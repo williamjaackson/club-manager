@@ -2,22 +2,16 @@ import { sql } from "./lib/database";
 import { redisClient } from "./lib/redis";
 import { Client } from "discord.js";
 import config from "../config.json";
+import { processJoin, processLeave } from "./updateClubMember";
 
 export async function redisEventHandler(client: Client) {
   redisClient.subscribe("member:join", async (message) => {
     const { campus_user_id, club_id } = JSON.parse(message);
 
-    const clubArea = club_id === "24236" ? "Brisbane/Online" : "Gold Coast";
-
     const [discordUserRecord] = await sql`
       SELECT * FROM discord_users
       JOIN campus_users ON discord_users.student_number = campus_users.student_number
       WHERE campus_users.campus_user_id = ${campus_user_id}
-    `;
-
-    const [campusUserRecord] = await sql`
-      SELECT * FROM campus_users
-      WHERE campus_user_id = ${campus_user_id}
     `;
 
     if (!discordUserRecord) {
@@ -31,10 +25,8 @@ export async function redisEventHandler(client: Client) {
     }
 
     const guild = await client.guilds.fetch(config.guildId);
-    const role = await guild.roles.fetch(config.roleId);
-
-    if (!guild || !role) {
-      console.log("Guild or role not found");
+    if (!guild) {
+      console.log("Guild not found");
       return;
     }
 
@@ -52,20 +44,11 @@ export async function redisEventHandler(client: Client) {
       return;
     }
 
-    await discordMember.send(`**Thank you for joining the Griffith ICT Club (${clubArea}) on CampusGroups!**
-You've been given club-member access on the discord, and have now been connected as:
-\`\`\`
-${campusUserRecord.first_name} ${campusUserRecord.last_name}
-\`\`\`
--# This will only ever be viewable by verified students, or staff members.`);
-
-    await discordMember.roles.add(role);
-
-    console.log(campus_user_id, club_id);
+    console.log("Processing join for", campus_user_id, club_id);
+    await processJoin(discordMember);
   });
 
   redisClient.subscribe("member:leave", async (message) => {
-    // when the user leaves, check if the old member has the role, if so, remove it.
     const { campus_user_id, club_id } = JSON.parse(message);
 
     const [discordUserRecord] = await sql`
@@ -84,10 +67,8 @@ ${campusUserRecord.first_name} ${campusUserRecord.last_name}
     }
 
     const guild = await client.guilds.fetch(config.guildId);
-    const role = await guild.roles.fetch(config.roleId);
-
-    if (!guild || !role) {
-      console.log("Guild or role not found");
+    if (!guild) {
+      console.log("Guild not found");
       return;
     }
 
@@ -105,6 +86,6 @@ ${campusUserRecord.first_name} ${campusUserRecord.last_name}
       return;
     }
 
-    await discordMember.roles.remove(role);
+    await processLeave(discordMember);
   });
 }
