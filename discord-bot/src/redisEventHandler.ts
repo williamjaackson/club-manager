@@ -39,11 +39,6 @@ export async function redisEventHandler(client: Client) {
       return;
     }
 
-    if (discordMember.id !== "817515772317925407") {
-      console.log("TESTING, WILL NOT DM");
-      return;
-    }
-
     console.log("Processing join for", campus_user_id, club_id);
     await processJoin(discordMember);
   });
