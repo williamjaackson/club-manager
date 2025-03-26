@@ -5,9 +5,10 @@ export async function waitForPage(
   page: Page,
   expectedUrl: string,
   navigationCount: number = 1,
+  allowExit: boolean = false,
 ) {
   for (let i = 0; i < navigationCount; i++) {
-    if (page.url() === expectedUrl) {
+    if (allowExit && page.url() === expectedUrl) {
       return;
     }
     await page.waitForNavigation().catch((e) => {

@@ -28,7 +28,8 @@ export async function runGriffithAuthFlow(
 
   // move to the devices page.
   await page.goto(`${config.URL.pingOne}/devices`);
-  await page.waitForSelector(`[data-id="${otp_id}"]`);
+  await page.waitForNetworkIdle();
+  // await page.waitForSelector(`[data-id="${otp_id}"]`);
   await page.click(`[data-id="${otp_id}"]`);
   await page.click("#device-submit");
 
@@ -41,7 +42,7 @@ export async function runGriffithAuthFlow(
   await page.type("#otp", otp);
   await page.click('input[type="submit"]');
 
-  await waitForPage(page, `${config.URL.campusGroups}/groups`, 4);
+  await waitForPage(page, `${config.URL.campusGroups}/groups`, 4, true);
 
   // Get cookies
   const browser_cookies = await browser.cookies();
@@ -65,7 +66,7 @@ export async function newSession(page: Page): Promise<void> {
   await page.goto(
     "https://www.campusgroups.com/shibboleth/login?idp=griffith&school=griffith",
   );
-  await waitForPage(page, `${config.URL.campusGroups}/groups`, 2);
+  await waitForPage(page, `${config.URL.campusGroups}/groups`, 2, true);
   // const cookies = await runGriffithAuthFlow(page.browser());
   // await page.setCookie(...cookies);
 }
