@@ -7,6 +7,9 @@ export async function waitForPage(
   navigationCount: number = 1,
 ) {
   for (let i = 0; i < navigationCount; i++) {
+    if (page.url() === expectedUrl) {
+      return;
+    }
     await page.waitForNavigation().catch((e) => {
       console.log(
         `Failed to navigate to ${expectedUrl}, ${i} of ${navigationCount}, ${page.url()}, ${e}`,

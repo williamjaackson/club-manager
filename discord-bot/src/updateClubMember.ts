@@ -7,6 +7,7 @@ export async function processLeave(member: GuildMember) {
   if (!role) throw Error("Role not found.");
 
   await member.roles.remove(role);
+  console.log("Removed role from member", member.id);
 }
 
 export async function processJoin(member: GuildMember) {
@@ -27,6 +28,7 @@ ${campusUserRecord.first_name} ${campusUserRecord.last_name}
 -# This will only ever be viewable by verified students, or staff members.`);
 
   await member.roles.add(role);
+  console.log("Added role to member", member.id);
 }
 
 // export async function updateClubMember(
