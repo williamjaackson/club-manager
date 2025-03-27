@@ -28,24 +28,18 @@ export async function connectEventHandler(client: Client) {
         JOIN campus_users ON campus_members.campus_user_id = campus_users.campus_user_id
         WHERE campus_users.student_number = ${sNumber}
       `;
-      console.log("memberRecord", memberRecord, sNumber);
 
       return !!memberRecord;
     }
 
     if (isConnect) {
       const [memberId, sNumber] = [isConnect[1], isConnect[2]];
-      console.log("memberId", memberId);
-      console.log("sNumber", sNumber);
       const member = await message.guild!.members.fetch(memberId);
 
-      if (!member) {
-        console.log("Member not found, skipping");
-        return;
-      }
+      if (!member) return;
 
       if (!(await checkMembership(sNumber))) {
-        console.log("Member is not a club member, processing join");
+        await processLeave(member);
         return;
       }
 
@@ -55,7 +49,6 @@ export async function connectEventHandler(client: Client) {
 
       const prevMember = await message.guild!.members.fetch(prevMemberId);
       if (!prevMember) {
-        console.log("Previous member not found, skipping");
         return;
       }
 
