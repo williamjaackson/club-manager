@@ -25,11 +25,11 @@ export async function processJoin(member: GuildMember) {
     await member
       .send(
         `**Thank you for joining the Griffith ICT Club on CampusGroups!**
-  You've been given club-member access on the discord, and have now been connected as:
-  \`\`\`
-  ${campusUserRecord.first_name} ${campusUserRecord.last_name}
-  \`\`\`
-  -# This will only ever be viewable by verified students, or staff members.`
+You've been given club-member access on the discord, and have now been connected as:
+\`\`\`
+${campusUserRecord.first_name} ${campusUserRecord.last_name}
+\`\`\`
+-# This will only ever be viewable by verified students, or staff members.`
       )
       .catch(() => {});
   }
