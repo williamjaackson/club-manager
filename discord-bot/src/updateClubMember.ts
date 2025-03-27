@@ -19,12 +19,20 @@ export async function processJoin(member: GuildMember) {
     WHERE discord_users.discord_user_id = ${member.id}
   `;
 
-  await member.send(`**Thank you for joining the Griffith ICT Club on CampusGroups!**
-You've been given club-member access on the discord, and have now been connected as:
-\`\`\`
-${campusUserRecord.first_name} ${campusUserRecord.last_name}
-\`\`\`
--# This will only ever be viewable by verified students, or staff members.`);
+  // check if the user already has the connected role
+  if (!member.roles.cache.has(config.roleId)) {
+    // only send the message if the user is newly getting connected
+    await member
+      .send(
+        `**Thank you for joining the Griffith ICT Club on CampusGroups!**
+  You've been given club-member access on the discord, and have now been connected as:
+  \`\`\`
+  ${campusUserRecord.first_name} ${campusUserRecord.last_name}
+  \`\`\`
+  -# This will only ever be viewable by verified students, or staff members.`
+      )
+      .catch(() => {});
+  }
 
   await member.roles.add(role);
 }
