@@ -13,7 +13,7 @@
     "resolveJsonModule": true,
     "removeComments": true,
     "typeRoots": ["./node_modules/@types"],
-    "sourceMap": true,
+    "sourceMap": false,
     "baseUrl": "./src"
   },
   "include": ["src/**/*"],
