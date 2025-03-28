@@ -20,7 +20,7 @@ async function updateMemberLists() {
   }
 
   await Promise.all([
-    // updateClubMemberList("24236"),
+    updateClubMemberList("24236"),
     updateClubMemberList("24237"),
   ]);
 

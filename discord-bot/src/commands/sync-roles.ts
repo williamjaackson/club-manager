@@ -22,45 +22,65 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     flags: MessageFlags.Ephemeral,
   });
 
-  const members = await interaction.guild!.members.fetch();
+  const discordMembers = await interaction.guild!.members.fetch();
+  const campusMembers = await sql`
+    SELECT * FROM campus_members
+    JOIN campus_users ON campus_users.campus_user_id = campus_members.campus_user_id
+    JOIN discord_users ON discord_users.student_number = campus_users.student_number
+  `;
 
-  async function syncRoles(member: GuildMember) {
+  const discordMembersMap = new Map(
+    discordMembers.map((member) => [member.id, member])
+  );
+
+  const campusMembersMap = new Map(
+    campusMembers.map((member) => [member.discord_user_id, member])
+  );
+
+  async function syncRoles(
+    member: GuildMember | undefined,
+    campusMember: Record<string, any> | undefined
+  ) {
+    if (!member) return;
     const hasRole = member.roles.cache.has(config.roleId);
 
-    // check if the user is a member on campus groups
-    const [memberRecord] = await sql`
-      SELECT * FROM campus_members
-      JOIN campus_users ON campus_users.campus_user_id = campus_members.campus_user_id
-      JOIN discord_users ON discord_users.student_number = campus_users.student_number
-      WHERE discord_users.discord_user_id = ${member.id}
-    `;
-
-    if (!memberRecord && !hasRole) return;
-    if (memberRecord && hasRole) return;
+    if (!campusMember && !hasRole) return;
+    if (campusMember && hasRole) return;
 
     if (!hasRole) {
       await member.roles.add(config.roleId);
+      return "Added role";
     } else {
       await member.roles.remove(config.roleId);
+      return "Removed role";
     }
-
-    return member.id;
   }
 
-  const results = [];
-  // first 2 members for testing
-  const limitedMembers = Array.from(members.values()).slice(0, 2);
-  for (const member of limitedMembers) {
-    const result = await syncRoles(member);
-    if (result) results.push(result);
+  const results = new Map<string, string>();
+  // for testing, only use this discord member: 817515772317925407, 874415216186757181
+  // const testDiscordMembers = ["817515772317925407", "874415216186757181"];
+  // const testDiscordMembersMap = new Map(
+  // testDiscordMembers.map((id) => [id, discordMembersMap.get(id)])
+  // );
+  for (const [discordId, discordMember] of discordMembersMap.entries()) {
+    // if (!testDiscordMembers.includes(discordId)) continue;
+
+    const campusMember = campusMembersMap.get(discordId);
+    // if () continue;
+
+    const result = await syncRoles(discordMember, campusMember);
+    if (result) results.set(discordId, result);
   }
 
   await interaction.editReply({
-    content: `Changed roles for ${results.length} members.`,
+    content: `Changed roles for ${results.size} members.`,
     files: [
-      new AttachmentBuilder(Buffer.from(JSON.stringify(results, null, 2)), {
-        name: "results.json",
-      }),
+      new AttachmentBuilder(
+        Buffer.from(JSON.stringify(Object.fromEntries(results), null, 2)),
+        {
+          name: "results.json",
+        }
+      ),
     ],
   });
 
