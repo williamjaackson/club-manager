@@ -15,10 +15,15 @@ export async function redisEventHandler(client: Client) {
     WHERE campus_users.campus_user_id = ${campus_user_id}
     `;
 
+    const [campusUserRecord] = await sql`
+      SELECT * FROM campus_users
+      WHERE campus_user_id = ${campus_user_id}
+    `;
+
     if (!discordUserRecord) {
       await log(
         client,
-        `New Campus User: ${campus_user_id} - User does not have a discord account.`
+        `Campus User Join: ${campus_user_id} - @No Account - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
       );
       console.log(
         "member:join",
@@ -42,7 +47,7 @@ export async function redisEventHandler(client: Client) {
     if (!discordMember) {
       await log(
         client,
-        `New Campus User: ${campus_user_id} - Discord member is not in the server.`
+        `Campus User Join: ${campus_user_id} - @Not in Server - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
       );
       console.log("Discord member not found");
       return;
@@ -50,7 +55,7 @@ export async function redisEventHandler(client: Client) {
 
     await log(
       client,
-      `New Campus User: ${campus_user_id}. <@${discordMember.id}>`
+      `Campus User Join: ${campus_user_id}. - <@${discordMember.id}> - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
     );
     console.log("Processing join for", campus_user_id, club_id);
     await processJoin(discordMember);
@@ -65,7 +70,16 @@ export async function redisEventHandler(client: Client) {
         WHERE campus_users.campus_user_id = ${campus_user_id}
       `;
 
+    const [campusUserRecord] = await sql`
+      SELECT * FROM campus_users
+      WHERE campus_user_id = ${campus_user_id}
+    `;
+
     if (!discordUserRecord) {
+      await log(
+        client,
+        `Campus User Leave: ${campus_user_id} - @No Account - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
+      );
       console.log(
         "member:leave",
         club_id,
@@ -85,10 +99,18 @@ export async function redisEventHandler(client: Client) {
     );
 
     if (!discordMember) {
+      await log(
+        client,
+        `Campus User Leave: ${campus_user_id} - @Not in Server - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
+      );
       console.log("Discord member not found");
       return;
     }
 
+    await log(
+      client,
+      `Campus User Leave: ${campus_user_id} - <@${discordMember.id}> - ${campusUserRecord.student_number}, \`${campusUserRecord.first_name} ${campusUserRecord.last_name}\`.`
+    );
     await processLeave(discordMember);
   });
 }
