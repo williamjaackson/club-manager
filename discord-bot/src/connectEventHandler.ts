@@ -2,6 +2,7 @@ import { Client, Events } from "discord.js";
 import config from "../config.json";
 import { processJoin, processLeave } from "./updateClubMember";
 import { sql } from "./lib/database";
+import { log } from "./lib/logging";
 
 export async function connectEventHandler(client: Client) {
   client.on(Events.MessageCreate, async (message) => {
@@ -39,10 +40,12 @@ export async function connectEventHandler(client: Client) {
       if (!member) return;
 
       if (!(await checkMembership(sNumber))) {
+        await log(member.client, `<connect> Leave: <@${member.id}>`);
         await processLeave(member);
         return;
       }
 
+      await log(member.client, `<connect> Join: <@${member.id}>`);
       await processJoin(member);
     } else if (isOverconnect) {
       const [prevMemberId, sNumber, newMemberId] = isOverconnect?.slice(1, 3);
@@ -52,6 +55,7 @@ export async function connectEventHandler(client: Client) {
         return;
       }
 
+      await log(prevMember.client, `<over-connect> Leave: <@${prevMember.id}>`);
       await processLeave(prevMember);
     }
 
