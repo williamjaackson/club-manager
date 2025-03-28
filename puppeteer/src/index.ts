@@ -20,11 +20,12 @@ async function updateMemberLists() {
   }
 
   await Promise.all([
-    updateClubMemberList("24236"),
+    // updateClubMemberList("24236"),
     updateClubMemberList("24237"),
   ]);
 
   await browser.close();
+  console.log("Done!");
 }
 
 async function main() {
