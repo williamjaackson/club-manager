@@ -39,8 +39,12 @@ export async function connectEventHandler(client: Client) {
 
       if (!member) return;
 
+      const hasRole = member.roles.cache.has(config.roleId);
+
       if (!(await checkMembership(sNumber))) {
-        await log(member.client, `<connect> Leave: <@${member.id}>`);
+        if (hasRole) {
+          await log(member.client, `<connect> Leave: <@${member.id}>`);
+        }
         await processLeave(member);
         return;
       }
