@@ -1,6 +1,6 @@
 # Club Manager
 
-This project is an extenstion to the (https://github.com/williamjaackson/griffith-connect)[griffith-connect] Discord bot.
+This project is an extenstion to the [griffith-connect](https://github.com/williamjaackson/griffith-connect) Discord bot.
 
 ## Features
 
