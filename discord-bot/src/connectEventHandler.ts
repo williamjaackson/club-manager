@@ -1,4 +1,10 @@
-import { Client, Events } from "discord.js";
+import {
+  ButtonStyle,
+  ActionRowBuilder,
+  ButtonBuilder,
+  Client,
+  Events,
+} from "discord.js";
 import config from "../config.json";
 import { processJoin, processLeave } from "./updateClubMember";
 import { sql } from "./lib/database";
@@ -41,6 +47,26 @@ export async function connectEventHandler(client: Client) {
 
       if (!(await checkMembership(sNumber))) {
         await processLeave(member);
+        await member.send({
+          content: `**You aren't a club member!**
+Join __Griffith ICT Club__ on CampusGroups.
+
+it's free and you get Club-Member access on Discord, access to events, and other perks!
+
+-# LOG IN WITH YOUR GRIFFITH S-NUMBER TO BE AUTOMATICALLY CONNECTED`,
+          components: [
+            new ActionRowBuilder<ButtonBuilder>().addComponents(
+              new ButtonBuilder()
+                .setLabel("Gold Coast (In-Person Only)")
+                .setURL("https://griffith.campusgroups.com/GIC/club_signup")
+                .setStyle(ButtonStyle.Link),
+              new ButtonBuilder()
+                .setLabel("Brisbane/Online/Other")
+                .setURL("https://griffith.campusgroups.com/GICT/club_signup")
+                .setStyle(ButtonStyle.Link)
+            ),
+          ],
+        });
         return;
       }
 
