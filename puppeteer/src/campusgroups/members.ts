@@ -60,8 +60,7 @@ export async function updateMemberList(
   // Insert records into database
   for (const record of records) {
     const existingMember = existingMembers.find(
-      (member) =>
-        member.campus_member_id === parseInt(record["Member Identifier"]),
+      (member) => member.campus_member_id === record["Member Identifier"],
     );
 
     if (existingMember) {
@@ -101,7 +100,6 @@ export async function updateMemberList(
 
   for (const existingMember of existingMembers) {
     // all of these people have left the campus_groups since last time we updated the list
-
     // remove from database
     await supabase
       .from("campus_members")
