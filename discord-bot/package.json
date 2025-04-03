@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
+    "@supabase/supabase-js": "^2.49.4",
     "discord.js": "^14.18.0",
     "redis": "^4.7.0",
     "typescript": "^5.8.2"
