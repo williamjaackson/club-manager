@@ -7,7 +7,7 @@ import {
 } from "discord.js";
 import config from "../config.json";
 import { processJoin, processLeave } from "./updateClubMember";
-import { sql } from "./lib/database";
+import { supabase } from "./lib/database";
 import { log } from "./lib/logging";
 
 export async function connectEventHandler(client: Client) {
@@ -27,16 +27,19 @@ export async function connectEventHandler(client: Client) {
         message.content
       );
 
-    // HAVENT CHECKED IF THEY ARE A CLUB MEMBER.
-
     async function checkMembership(sNumber: string) {
-      const [memberRecord] = await sql`
-        SELECT * FROM campus_members
-        JOIN campus_users ON campus_members.campus_user_id = campus_users.campus_user_id
-        WHERE campus_users.student_number = ${sNumber}
-      `;
+      const { data: memberRecords } = await supabase
+        .from("campus_members")
+        .select("*")
+        .eq(
+          "campus_user_id",
+          supabase
+            .from("campus_users")
+            .select("campus_user_id")
+            .eq("student_number", sNumber)
+        );
 
-      return !!memberRecord;
+      return memberRecords && memberRecords.length > 0;
     }
 
     if (isConnect) {

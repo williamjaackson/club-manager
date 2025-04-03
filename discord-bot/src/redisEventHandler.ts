@@ -1,4 +1,4 @@
-import { sql } from "./lib/database";
+import { supabase } from "./lib/database";
 import { redisClient } from "./lib/redis";
 import { Client } from "discord.js";
 import config from "../config.json";
@@ -9,16 +9,17 @@ export async function redisEventHandler(client: Client) {
   redisClient.subscribe("member:join", async (message) => {
     const { campus_user_id, club_id } = JSON.parse(message);
 
-    const [discordUserRecord] = await sql`
-    SELECT * FROM discord_users
-    JOIN campus_users ON discord_users.student_number = campus_users.student_number
-    WHERE campus_users.campus_user_id = ${campus_user_id}
-    `;
+    const { data: campusUserRecord } = await supabase
+      .from("campus_users")
+      .select("*")
+      .eq("campus_user_id", campus_user_id)
+      .single();
 
-    const [campusUserRecord] = await sql`
-      SELECT * FROM campus_users
-      WHERE campus_user_id = ${campus_user_id}
-    `;
+    const { data: discordUserRecord } = await supabase
+      .from("discord_users")
+      .select("*")
+      .eq("student_number", campusUserRecord.student_number)
+      .single();
 
     if (!discordUserRecord) {
       await log(
@@ -64,16 +65,17 @@ export async function redisEventHandler(client: Client) {
   redisClient.subscribe("member:leave", async (message) => {
     const { campus_user_id, club_id } = JSON.parse(message);
 
-    const [discordUserRecord] = await sql`
-        SELECT * FROM discord_users
-        JOIN campus_users ON discord_users.student_number = campus_users.student_number
-        WHERE campus_users.campus_user_id = ${campus_user_id}
-      `;
+    const { data: campusUserRecord } = await supabase
+      .from("campus_users")
+      .select("*")
+      .eq("campus_user_id", campus_user_id)
+      .single();
 
-    const [campusUserRecord] = await sql`
-      SELECT * FROM campus_users
-      WHERE campus_user_id = ${campus_user_id}
-    `;
+    const { data: discordUserRecord } = await supabase
+      .from("discord_users")
+      .select("*")
+      .eq("student_number", campusUserRecord.student_number)
+      .single();
 
     if (!discordUserRecord) {
       await log(
