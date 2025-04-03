@@ -13,17 +13,16 @@ export async function processJoin(member: GuildMember) {
   const role = await member.guild.roles.fetch(config.roleId);
   if (!role) throw Error("Role not found.");
 
+  const { data: discordUserRecord } = await supabase
+    .from("discord_users")
+    .select("*")
+    .eq("discord_user_id", member.id)
+    .single();
+
   const { data: campusUserRecord } = await supabase
     .from("campus_users")
     .select("*")
-    .eq(
-      "student_number",
-      supabase
-        .from("discord_users")
-        .select("student_number")
-        .eq("discord_user_id", member.id)
-        .single()
-    )
+    .eq("student_number", discordUserRecord.student_number)
     .single();
 
   // check if the user already has the connected role
