@@ -3,7 +3,7 @@ import { officerView } from "./club";
 import config from "../../config.json";
 import axios from "axios";
 // import { setAuthCookies } from "./auth";
-import { sql } from "../lib/database";
+import { supabase } from "../lib/database";
 import { parse } from "csv-parse/sync";
 import { redisClient } from "../lib/redis";
 
@@ -42,10 +42,11 @@ export async function updateMemberList(
   // do I need to track new members? ON JOIN event from campus?.
   // YES. connect a member automatically to a club. should I send a new event for every club join, or just on the first club join?
   const newMembers = [];
-  const existingMembers = await sql`
-    SELECT * FROM campus_members
-    WHERE club_id = ${clubId}
-  `;
+  let { data: existingMembers } = await supabase
+    .from("campus_members")
+    .select("*")
+    .eq("club_id", clubId);
+  existingMembers = existingMembers ?? [];
 
   if (
     Math.abs(records.length - existingMembers.length) >
@@ -74,35 +75,19 @@ export async function updateMemberList(
       record["Email"],
     )?.[1];
 
-    await sql`
-      INSERT INTO campus_users (
-        campus_user_id,
-        student_number,
-        first_name,
-        last_name,
-        campus_email
-      ) VALUES (
-        ${record["User Identifier"]},
-        ${studentNumber},
-        ${record["First Name"]},
-        ${record["Last Name"]},
-        ${record["Email"]}
-      )
-      ON CONFLICT (campus_user_id) DO NOTHING
-    `;
+    await supabase.from("campus_users").insert({
+      campus_user_id: record["User Identifier"],
+      student_number: studentNumber,
+      first_name: record["First Name"],
+      last_name: record["Last Name"],
+      campus_email: record["Email"],
+    });
 
-    await sql`
-      INSERT INTO campus_members (
-        campus_user_id,
-        campus_member_id,
-        club_id
-      ) VALUES (
-        ${record["User Identifier"]},
-        ${record["Member Identifier"]},
-        ${clubId}
-      )
-      ON CONFLICT (campus_member_id) DO NOTHING
-    `;
+    await supabase.from("campus_members").insert({
+      campus_user_id: record["User Identifier"],
+      campus_member_id: record["Member Identifier"],
+      club_id: clubId,
+    });
 
     await redisClient.publish(
       "member:join",
@@ -118,10 +103,11 @@ export async function updateMemberList(
     // all of these people have left the campus_groups since last time we updated the list
 
     // remove from database
-    await sql`
-      DELETE FROM campus_members
-      WHERE campus_member_id = ${existingMember.campus_member_id}
-    `;
+    await supabase
+      .from("campus_members")
+      .delete()
+      .eq("campus_member_id", existingMember.campus_member_id);
+
     await redisClient.publish(
       "member:leave",
       JSON.stringify({
