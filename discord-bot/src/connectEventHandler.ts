@@ -29,15 +29,15 @@ export async function connectEventHandler(client: Client) {
 
     async function checkMembership(sNumber: string) {
       const { data: campusUserRecord } = await supabase
-        .from("campus_users")
+        .from("CampusUser")
         .select("*")
         .eq("student_number", sNumber)
         .single();
 
       const { data: memberRecords } = await supabase
-        .from("campus_members")
+        .from("ClubMember")
         .select("*")
-        .eq("campus_user_id", campusUserRecord.campus_user_id);
+        .eq("campus_user", campusUserRecord.id);
 
       return memberRecords && memberRecords.length > 0;
     }

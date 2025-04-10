@@ -10,13 +10,13 @@ export async function redisEventHandler(client: Client) {
     const { campus_user_id, club_id } = JSON.parse(message);
 
     const { data: campusUserRecord } = await supabase
-      .from("campus_users")
+      .from("CampusUser")
       .select("*")
-      .eq("campus_user_id", campus_user_id)
+      .eq("id", campus_user_id)
       .single();
 
     const { data: discordUserRecord } = await supabase
-      .from("discord_users")
+      .from("DiscordUser")
       .select("*")
       .eq("student_number", campusUserRecord.student_number)
       .single();
@@ -41,9 +41,7 @@ export async function redisEventHandler(client: Client) {
       return;
     }
 
-    const discordMember = await guild.members.fetch(
-      discordUserRecord.discord_user_id
-    );
+    const discordMember = await guild.members.fetch(discordUserRecord.id);
 
     if (!discordMember) {
       await log(
@@ -66,13 +64,13 @@ export async function redisEventHandler(client: Client) {
     const { campus_user_id, club_id } = JSON.parse(message);
 
     const { data: campusUserRecord } = await supabase
-      .from("campus_users")
+      .from("CampusUser")
       .select("*")
-      .eq("campus_user_id", campus_user_id)
+      .eq("id", campus_user_id)
       .single();
 
     const { data: discordUserRecord } = await supabase
-      .from("discord_users")
+      .from("DiscordUser")
       .select("*")
       .eq("student_number", campusUserRecord.student_number)
       .single();
@@ -96,9 +94,7 @@ export async function redisEventHandler(client: Client) {
       return;
     }
 
-    const discordMember = await guild.members.fetch(
-      discordUserRecord.discord_user_id
-    );
+    const discordMember = await guild.members.fetch(discordUserRecord.id);
 
     if (!discordMember) {
       await log(

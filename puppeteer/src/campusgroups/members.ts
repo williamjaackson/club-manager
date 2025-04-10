@@ -43,9 +43,9 @@ export async function updateMemberList(
   // YES. connect a member automatically to a club. should I send a new event for every club join, or just on the first club join?
   const newMembers = [];
   let { data: existingMembers } = await supabase
-    .from("campus_members")
+    .from("ClubMember")
     .select("*")
-    .eq("club_id", clubId);
+    .eq("club", clubId);
   existingMembers = existingMembers ?? [];
 
   if (
@@ -60,7 +60,7 @@ export async function updateMemberList(
   // Insert records into database
   for (const record of records) {
     const existingMember = existingMembers.find(
-      (member) => member.campus_member_id === record["Member Identifier"],
+      (member) => member.id === record["Member Identifier"],
     );
 
     if (existingMember) {
@@ -70,22 +70,25 @@ export async function updateMemberList(
       newMembers.push(record["Member Identifier"]);
     }
 
-    const studentNumber = /(s\d{7})\@griffithuni\.edu\.au/.exec(
-      record["Email"],
-    )?.[1];
+    const studentNumber =
+      /(s\d{7})\@griffithuni\.edu\.au/.exec(record["Email"])?.[1] ?? null;
 
-    await supabase.from("campus_users").insert({
-      campus_user_id: record["User Identifier"],
+    await supabase.from("Student").insert({
+      student_number: studentNumber,
+    });
+
+    await supabase.from("CampusUser").insert({
+      id: record["User Identifier"],
       student_number: studentNumber,
       first_name: record["First Name"],
       last_name: record["Last Name"],
-      campus_email: record["Email"],
+      email: record["Email"],
     });
 
-    await supabase.from("campus_members").insert({
-      campus_user_id: record["User Identifier"],
-      campus_member_id: record["Member Identifier"],
-      club_id: clubId,
+    await supabase.from("ClubMember").insert({
+      id: record["Member Identifier"],
+      campus_user: record["User Identifier"],
+      club: clubId,
     });
 
     await redisClient.publish(
@@ -101,22 +104,19 @@ export async function updateMemberList(
   for (const existingMember of existingMembers) {
     // all of these people have left the campus_groups since last time we updated the list
     // remove from database
-    await supabase
-      .from("campus_members")
-      .delete()
-      .eq("campus_member_id", existingMember.campus_member_id);
+    await supabase.from("ClubMember").delete().eq("id", existingMember.id);
 
     await redisClient.publish(
       "member:leave",
       JSON.stringify({
-        campus_user_id: existingMember.campus_user_id,
-        campus_member_id: existingMember.campus_member_id,
+        campus_user_id: existingMember.campus_user,
+        campus_member_id: existingMember.id,
         club_id: clubId,
       }),
     );
   }
 
-  const oldMembers = existingMembers.map((member) => member.campus_member_id);
+  const oldMembers = existingMembers.map((member) => member.id);
 
   return [newMembers, oldMembers];
 }

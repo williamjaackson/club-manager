@@ -14,13 +14,13 @@ export async function processJoin(member: GuildMember) {
   if (!role) throw Error("Role not found.");
 
   const { data: discordUserRecord } = await supabase
-    .from("discord_users")
+    .from("DiscordUser")
     .select("*")
-    .eq("discord_user_id", member.id)
+    .eq("id", member.id)
     .single();
 
   const { data: campusUserRecord } = await supabase
-    .from("campus_users")
+    .from("CampusUser")
     .select("*")
     .eq("student_number", discordUserRecord.student_number)
     .single();
