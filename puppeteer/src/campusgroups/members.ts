@@ -75,18 +75,6 @@ export async function updateMemberList(
     );
 
     if (existingMember) {
-      // await supabase
-      //   .from("ClubMember")
-      //   .update({
-      //     signup_date: await formatDate(record["Signup Date"]),
-      //   })
-      //   .eq("id", existingMember.id);
-      // console.log(
-      //   "updated member",
-      //   existingMember.id,
-      //   record["Signup Date"],
-      //   await formatDate(record["Signup Date"]),
-      // );
       existingMembers.splice(existingMembers.indexOf(existingMember), 1);
       continue;
     } else {
