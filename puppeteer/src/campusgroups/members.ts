@@ -58,7 +58,14 @@ export async function updateMemberList(
   }
 
   async function formatDate(date: string) {
-    return new Date(date).toISOString().split("T")[0];
+    // date is in format DD/MM/YYYY
+    // return new Date(date).toISOString().split("T")[0];
+    const [month, day, year] = date.split(" ")[0].split("/");
+    if (parseInt(month) > 12) {
+      console.log("ERROR: month is greater than 12", date);
+      return null;
+    }
+    return new Date(`${year}-${month}-${day}`).toISOString().split("T")[0];
   }
 
   // Insert records into database
@@ -68,6 +75,18 @@ export async function updateMemberList(
     );
 
     if (existingMember) {
+      // await supabase
+      //   .from("ClubMember")
+      //   .update({
+      //     signup_date: await formatDate(record["Signup Date"]),
+      //   })
+      //   .eq("id", existingMember.id);
+      // console.log(
+      //   "updated member",
+      //   existingMember.id,
+      //   record["Signup Date"],
+      //   await formatDate(record["Signup Date"]),
+      // );
       existingMembers.splice(existingMembers.indexOf(existingMember), 1);
       continue;
     } else {
