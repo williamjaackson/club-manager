@@ -89,6 +89,7 @@ export async function updateMemberList(
       id: record["Member Identifier"],
       campus_user: record["User Identifier"],
       club: clubId,
+      signup_date: record["Signup Date"],
     });
 
     await redisClient.publish(
