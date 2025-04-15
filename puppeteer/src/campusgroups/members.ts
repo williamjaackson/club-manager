@@ -57,6 +57,10 @@ export async function updateMemberList(
     );
   }
 
+  async function formatDate(date: string) {
+    return new Date(date).toISOString().split("T")[0];
+  }
+
   // Insert records into database
   for (const record of records) {
     const existingMember = existingMembers.find(
@@ -89,11 +93,7 @@ export async function updateMemberList(
       id: record["Member Identifier"],
       campus_user: record["User Identifier"],
       club: clubId,
-      signup_date: record["Signup Date"]
-        .split(" ")[0]
-        .split("/")
-        .reverse()
-        .join("-"), // DD/MM/YYYY -> YYYY-MM-DD
+      signup_date: await formatDate(record["Signup Date"]),
     });
 
     await redisClient.publish(
