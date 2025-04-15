@@ -89,7 +89,11 @@ export async function updateMemberList(
       id: record["Member Identifier"],
       campus_user: record["User Identifier"],
       club: clubId,
-      signup_date: new Date(record["Signup Date"]).toISOString().split("T")[0], // DD/MM/YYYY -> YYYY-MM-DD
+      signup_date: record["Signup Date"]
+        .split(" ")[0]
+        .split("/")
+        .reverse()
+        .join("-"), // DD/MM/YYYY -> YYYY-MM-DD
     });
 
     await redisClient.publish(
