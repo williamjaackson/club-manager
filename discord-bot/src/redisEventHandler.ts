@@ -41,7 +41,12 @@ export async function redisEventHandler(client: Client) {
       return;
     }
 
-    const discordMember = await guild.members.fetch(discordUserRecord.id);
+    let discordMember = null;
+    try {
+      discordMember = await guild.members.fetch(discordUserRecord.id);
+    } catch (error) {
+      discordMember = null;
+    }
 
     if (!discordMember) {
       await log(
