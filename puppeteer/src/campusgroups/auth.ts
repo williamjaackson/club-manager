@@ -42,7 +42,7 @@ export async function runGriffithAuthFlow(
   await page.type("#otp", otp);
   await page.click('input[type="submit"]');
 
-  await waitForPage(page, `${config.URL.campusGroups}/groups`, 4, true);
+  await waitForPage(page, `${config.URL.campusGroups}/web_app?id=48&menu_id=3060&if=0&`, 4, true);
 
   // Get cookies
   const browser_cookies = await browser.cookies();
@@ -66,7 +66,7 @@ export async function newSession(page: Page): Promise<void> {
   await page.goto(
     "https://www.campusgroups.com/shibboleth/login?idp=griffith&school=griffith",
   );
-  await waitForPage(page, `${config.URL.campusGroups}/groups`, 2, true);
+  await waitForPage(page, `${config.URL.campusGroups}/web_app?id=48&menu_id=3060&if=0&`, 2, true);
   // const cookies = await runGriffithAuthFlow(page.browser());
   // await page.setCookie(...cookies);
 }
