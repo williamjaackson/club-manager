@@ -52,6 +52,14 @@ export async function updateMemberList(
     Math.abs(records.length - existingMembers.length) >
     existingMembers.length * 0.1
   ) {
+    console.log(
+      "Existing Member Count:",
+      existingMembers.length,
+      "New Member Count:",
+      records.length,
+      "Difference:",
+      Math.abs(records.length - existingMembers.length),
+    );
     throw new Error(
       "Number of records is not within 10% of the existing members. Likely: failed to fetch the correct list.",
     );
