@@ -5,7 +5,7 @@ services:
       - .env
     depends_on:
       - redis
-    restart: always
+    restart: unless-stopped
   puppeteer:
     build: ./puppeteer
     env_file:
@@ -16,12 +16,11 @@ services:
       - seccomp=unconfined
     depends_on:
       - redis
-    restart: always
+    restart: unless-stopped
   redis:
     image: redis:latest
-    volumes:
-      - ./data:/data
-    restart: always
-
-volumes:
-  redis-data:
+    # volumes:
+    #   - ./data:/data
+    restart: unless-stopped
+# volumes:
+#   redis-data:
