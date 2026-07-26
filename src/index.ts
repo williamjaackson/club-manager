@@ -9,14 +9,21 @@ import {
 import { AuditLogger } from "./audit.js";
 import { commandDefinitions } from "./commands.js";
 import { config } from "./config.js";
-import { EventUnavailableError, Store } from "./database.js";
+import {
+  createDatabasePool,
+  EventUnavailableError,
+  initializeDatabase,
+  Store,
+} from "./database.js";
 import { EventController } from "./event-controller.js";
 import { startHealthServer } from "./health.js";
 
+await initializeDatabase(config.databaseUrl);
+const databasePool = createDatabasePool(config.databaseUrl);
 const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
-const store = new Store(config.databasePath);
+const store = new Store(databasePool);
 const audit = new AuditLogger(client, store, config.rsvpLogChannelId);
 const eventController = new EventController(store, audit);
 const healthServer = startHealthServer(client, config.healthPort);
@@ -95,7 +102,12 @@ async function respondWithError(
   };
 
   try {
-    if (interaction.deferred || interaction.replied) {
+    if (interaction.deferred) {
+      await interaction.editReply({
+        content: errorMessage(error),
+        components: [],
+      });
+    } else if (interaction.replied) {
       await interaction.followUp(response);
     } else {
       await interaction.reply(response);
@@ -105,7 +117,7 @@ async function respondWithError(
   }
 }
 
-function shutdown(signal: string): void {
+async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
@@ -113,14 +125,14 @@ function shutdown(signal: string): void {
   audit.stop();
   healthServer.close();
   client.destroy();
-  store.close();
+  await store.close();
 }
 
-process.once("SIGINT", () => shutdown("SIGINT"));
-process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
-client.login(config.token).catch((error: unknown) => {
+client.login(config.token).catch(async (error: unknown) => {
   console.error("Discord login failed", error);
   process.exitCode = 1;
-  shutdown("Login failure");
+  await shutdown("Login failure");
 });

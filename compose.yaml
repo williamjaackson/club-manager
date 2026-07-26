@@ -11,8 +11,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    volumes:
-      - bot-data:/data
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.HEALTH_PORT || 3000) + '/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))\""]
       interval: 30s
@@ -31,9 +29,4 @@ services:
     volumes:
       - ./src:/app/src
       - ./tsconfig.json:/app/tsconfig.json:ro
-      - bot-data-dev:/data
     command: pnpm run dev
-
-volumes:
-  bot-data:
-  bot-data-dev:

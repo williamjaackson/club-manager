@@ -1,6 +1,11 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import {
+  Pool,
+  neonConfig,
+  type PoolClient,
+} from "@neondatabase/serverless";
+import ws from "ws";
+
+neonConfig.webSocketConstructor = ws;
 
 export type EventStatus =
   | "draft"
@@ -80,22 +85,34 @@ export class EventUnavailableError extends Error {
   }
 }
 
-export class Store {
-  readonly #database: DatabaseSync;
+type Queryable = Pool | PoolClient;
 
-  constructor(path: string) {
-    if (path !== ":memory:") {
-      mkdirSync(dirname(path), { recursive: true });
-    }
+export function createDatabasePool(connectionString: string): Pool {
+  const pool = new Pool({
+    connectionString,
+    max: 5,
+    idleTimeoutMillis: 60_000,
+  });
+  pool.on("error", (error: unknown) => {
+    console.error("Unexpected Neon connection pool error", error);
+  });
+  return pool;
+}
 
-    this.#database = new DatabaseSync(path);
-    this.#database.exec(`
-      PRAGMA foreign_keys = ON;
-      PRAGMA journal_mode = WAL;
-      PRAGMA busy_timeout = 5000;
+export function directDatabaseUrl(connectionString: string): string {
+  const url = new URL(connectionString);
+  url.hostname = url.hostname.replace("-pooler.", ".");
+  return url.toString();
+}
 
+export async function setupDatabase(pool: Pool): Promise<void> {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query(`
       CREATE TABLE IF NOT EXISTS events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         guild_id TEXT NOT NULL,
         announcement_channel_id TEXT NOT NULL,
         message_id TEXT,
@@ -108,8 +125,8 @@ export class Store {
         artwork_name TEXT,
         status TEXT NOT NULL DEFAULT 'draft'
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
-        created_at INTEGER NOT NULL,
-        published_at INTEGER
+        created_at DOUBLE PRECISION NOT NULL,
+        published_at DOUBLE PRECISION
       );
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
@@ -118,70 +135,95 @@ export class Store {
         guild_id TEXT NOT NULL,
         artwork_url TEXT,
         artwork_name TEXT,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL
+        created_at DOUBLE PRECISION NOT NULL,
+        expires_at DOUBLE PRECISION NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS rsvps (
         event_id INTEGER NOT NULL REFERENCES events(id),
         user_id TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('active', 'cancelled')),
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
         PRIMARY KEY (event_id, user_id)
       );
 
       CREATE TABLE IF NOT EXISTS rsvp_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         event_id INTEGER NOT NULL REFERENCES events(id),
         user_id TEXT NOT NULL,
         action TEXT NOT NULL CHECK (action IN ('rsvp', 'cancel')),
-        created_at INTEGER NOT NULL
+        created_at DOUBLE PRECISION NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS audit_outbox (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         event_id INTEGER NOT NULL REFERENCES events(id),
         user_id TEXT NOT NULL,
         action TEXT NOT NULL CHECK (action IN ('rsvp', 'cancel')),
-        created_at INTEGER NOT NULL,
-        next_attempt_at INTEGER NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        next_attempt_at DOUBLE PRECISION NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0,
-        sent_at INTEGER,
+        sent_at DOUBLE PRECISION,
         last_error TEXT
       );
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
         ON audit_outbox (sent_at, next_attempt_at, id);
     `);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function initializeDatabase(
+  connectionString: string,
+): Promise<void> {
+  const pool = createDatabasePool(directDatabaseUrl(connectionString));
+
+  try {
+    await setupDatabase(pool);
+  } finally {
+    await pool.end();
+  }
+}
+
+export class Store {
+  readonly #pool: Pool;
+
+  constructor(pool: Pool) {
+    this.#pool = pool;
   }
 
-  close(): void {
-    this.#database.close();
+  async close(): Promise<void> {
+    await this.#pool.end();
   }
 
-  createEventDraft(
+  async createEventDraft(
     draft: NewEventDraft,
     now = currentTimestamp(),
-  ): EventRecord {
-    const result = this.#database
-      .prepare(
-        `
-          INSERT INTO events (
-            guild_id,
-            announcement_channel_id,
-            creator_id,
-            title,
-            schedule_text,
-            location,
-            announcement,
-            artwork_url,
-            artwork_name,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
+  ): Promise<EventRecord> {
+    const result = await this.#pool.query(
+      `
+        INSERT INTO events (
+          guild_id,
+          announcement_channel_id,
+          creator_id,
+          title,
+          schedule_text,
+          location,
+          announcement,
+          artwork_url,
+          artwork_name,
+          created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+      `,
+      [
         draft.guildId,
         draft.announcementChannelId,
         draft.creatorId,
@@ -192,40 +234,38 @@ export class Store {
         draft.artworkUrl ?? null,
         draft.artworkName ?? null,
         now,
-      );
+      ],
+    );
 
-    return this.getEvent(Number(result.lastInsertRowid))!;
+    return result.rows[0] as EventRecord;
   }
 
-  getEvent(id: number): EventRecord | undefined {
-    return this.#database
-      .prepare("SELECT * FROM events WHERE id = ?")
-      .get(id) as EventRecord | undefined;
+  async getEvent(id: number): Promise<EventRecord | undefined> {
+    return this.#getEvent(this.#pool, id);
   }
 
-  createPendingEventCreate(
+  async createPendingEventCreate(
     pending: NewPendingEventCreate,
     now = currentTimestamp(),
     lifetimeSeconds = 15 * 60,
-  ): void {
-    this.#database
-      .prepare("DELETE FROM pending_event_creates WHERE expires_at <= ?")
-      .run(now);
-    this.#database
-      .prepare(
-        `
-          INSERT INTO pending_event_creates (
-            token,
-            user_id,
-            guild_id,
-            artwork_url,
-            artwork_name,
-            created_at,
-            expires_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
+  ): Promise<void> {
+    await this.#pool.query(
+      "DELETE FROM pending_event_creates WHERE expires_at <= $1",
+      [now],
+    );
+    await this.#pool.query(
+      `
+        INSERT INTO pending_event_creates (
+          token,
+          user_id,
+          guild_id,
+          artwork_url,
+          artwork_name,
+          created_at,
+          expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
         pending.token,
         pending.userId,
         pending.guildId,
@@ -233,233 +273,300 @@ export class Store {
         pending.artworkName ?? null,
         now,
         now + lifetimeSeconds,
-      );
+      ],
+    );
   }
 
-  getPendingEventCreate(
+  async getPendingEventCreate(
     token: string,
     now = currentTimestamp(),
-  ): PendingEventCreateRecord | undefined {
-    return this.#database
-      .prepare(
-        `
-          SELECT *
-          FROM pending_event_creates
-          WHERE token = ? AND expires_at > ?
-        `,
-      )
-      .get(token, now) as PendingEventCreateRecord | undefined;
+  ): Promise<PendingEventCreateRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        SELECT *
+        FROM pending_event_creates
+        WHERE token = $1 AND expires_at > $2
+      `,
+      [token, now],
+    );
+    return result.rows[0] as PendingEventCreateRecord | undefined;
   }
 
-  deletePendingEventCreate(token: string): void {
-    this.#database
-      .prepare("DELETE FROM pending_event_creates WHERE token = ?")
-      .run(token);
+  async deletePendingEventCreate(token: string): Promise<void> {
+    await this.#pool.query(
+      "DELETE FROM pending_event_creates WHERE token = $1",
+      [token],
+    );
   }
 
-  claimEventForPublishing(id: number): boolean {
-    const result = this.#database
-      .prepare(
-        "UPDATE events SET status = 'publishing' WHERE id = ? AND status = 'draft'",
-      )
-      .run(id);
-    return result.changes === 1;
+  async consumePendingEventCreate(
+    token: string,
+    userId: string,
+    guildId: string | null,
+    now = currentTimestamp(),
+  ): Promise<PendingEventCreateRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        DELETE FROM pending_event_creates
+        WHERE
+          token = $1
+          AND user_id = $2
+          AND guild_id = $3
+          AND expires_at > $4
+        RETURNING *
+      `,
+      [token, userId, guildId, now],
+    );
+    return result.rows[0] as PendingEventCreateRecord | undefined;
   }
 
-  releaseEventForPublishing(id: number): void {
-    this.#database
-      .prepare(
-        "UPDATE events SET status = 'draft' WHERE id = ? AND status = 'publishing'",
-      )
-      .run(id);
+  async claimEventForPublishing(id: number): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE events
+        SET status = 'publishing'
+        WHERE id = $1 AND status = 'draft'
+      `,
+      [id],
+    );
+    return result.rowCount === 1;
   }
 
-  finishPublishing(
+  async releaseEventForPublishing(id: number): Promise<void> {
+    await this.#pool.query(
+      `
+        UPDATE events
+        SET status = 'draft'
+        WHERE id = $1 AND status = 'publishing'
+      `,
+      [id],
+    );
+  }
+
+  async finishPublishing(
     id: number,
     messageId: string,
     now = currentTimestamp(),
-  ): void {
-    const result = this.#database
-      .prepare(
-        `
-          UPDATE events
-          SET status = 'published', message_id = ?, published_at = ?
-          WHERE id = ? AND status = 'publishing'
-        `,
-      )
-      .run(messageId, now, id);
+  ): Promise<void> {
+    const result = await this.#pool.query(
+      `
+        UPDATE events
+        SET status = 'published', message_id = $1, published_at = $2
+        WHERE id = $3 AND status = 'publishing'
+      `,
+      [messageId, now, id],
+    );
 
-    if (result.changes !== 1) {
+    if (result.rowCount !== 1) {
       throw new Error(`Event ${id} could not be marked as published`);
     }
   }
 
-  discardEventDraft(id: number): boolean {
-    const result = this.#database
-      .prepare(
-        "UPDATE events SET status = 'discarded' WHERE id = ? AND status = 'draft'",
-      )
-      .run(id);
-    return result.changes === 1;
+  async discardEventDraft(id: number): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE events
+        SET status = 'discarded'
+        WHERE id = $1 AND status = 'draft'
+      `,
+      [id],
+    );
+    return result.rowCount === 1;
   }
 
-  getRsvpStatus(eventId: number, userId: string): RsvpStatus | undefined {
-    const row = this.#database
-      .prepare("SELECT status FROM rsvps WHERE event_id = ? AND user_id = ?")
-      .get(eventId, userId) as { status: RsvpStatus } | undefined;
-    return row?.status;
+  async getRsvpStatus(
+    eventId: number,
+    userId: string,
+  ): Promise<RsvpStatus | undefined> {
+    return this.#getRsvpStatus(this.#pool, eventId, userId);
   }
 
-  confirmRsvp(
+  async confirmRsvp(
     eventId: number,
     userId: string,
     now = currentTimestamp(),
-  ): RsvpChange {
+  ): Promise<RsvpChange> {
     return this.#changeRsvp(eventId, userId, "active", "rsvp", now);
   }
 
-  cancelRsvp(
+  async cancelRsvp(
     eventId: number,
     userId: string,
     now = currentTimestamp(),
-  ): RsvpChange {
+  ): Promise<RsvpChange> {
     return this.#changeRsvp(eventId, userId, "cancelled", "cancel", now);
   }
 
-  #changeRsvp(
+  async #changeRsvp(
     eventId: number,
     userId: string,
     status: RsvpStatus,
     action: AuditAction,
     now: number,
-  ): RsvpChange {
-    this.#database.exec("BEGIN IMMEDIATE");
+  ): Promise<RsvpChange> {
+    const client = await this.#pool.connect();
 
     try {
-      const event = this.getEvent(eventId);
+      await client.query("BEGIN");
+      // Lock one stable row before reading/updating an RSVP. This preserves
+      // idempotency when Discord retries the same interaction concurrently.
+      const event = await this.#getEvent(client, eventId, true);
 
       if (!event || event.status !== "published") {
         throw new EventUnavailableError();
       }
 
-      const currentStatus = this.getRsvpStatus(eventId, userId);
+      const currentStatus = await this.#getRsvpStatus(
+        client,
+        eventId,
+        userId,
+      );
 
-      if (currentStatus === status || (status === "cancelled" && !currentStatus)) {
-        this.#database.exec("COMMIT");
+      if (
+        currentStatus === status ||
+        (status === "cancelled" && !currentStatus)
+      ) {
+        await client.query("COMMIT");
         return { changed: false, status };
       }
 
-      this.#database
-        .prepare(
-          `
-            INSERT INTO rsvps (
-              event_id, user_id, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (event_id, user_id) DO UPDATE SET
-              status = excluded.status,
-              updated_at = excluded.updated_at
-          `,
-        )
-        .run(eventId, userId, status, now, now);
-      this.#database
-        .prepare(
-          `
-            INSERT INTO rsvp_history (event_id, user_id, action, created_at)
-            VALUES (?, ?, ?, ?)
-          `,
-        )
-        .run(eventId, userId, action, now);
-      this.#database
-        .prepare(
-          `
-            INSERT INTO audit_outbox (
-              event_id, user_id, action, created_at, next_attempt_at
-            ) VALUES (?, ?, ?, ?, ?)
-          `,
-        )
-        .run(eventId, userId, action, now, now);
+      await client.query(
+        `
+          INSERT INTO rsvps (
+            event_id, user_id, status, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (event_id, user_id) DO UPDATE SET
+            status = EXCLUDED.status,
+            updated_at = EXCLUDED.updated_at
+        `,
+        [eventId, userId, status, now, now],
+      );
+      await client.query(
+        `
+          INSERT INTO rsvp_history (event_id, user_id, action, created_at)
+          VALUES ($1, $2, $3, $4)
+        `,
+        [eventId, userId, action, now],
+      );
+      await client.query(
+        `
+          INSERT INTO audit_outbox (
+            event_id, user_id, action, created_at, next_attempt_at
+          ) VALUES ($1, $2, $3, $4, $5)
+        `,
+        [eventId, userId, action, now, now],
+      );
 
-      this.#database.exec("COMMIT");
+      await client.query("COMMIT");
       return { changed: true, status };
     } catch (error) {
-      this.#database.exec("ROLLBACK");
+      await client.query("ROLLBACK").catch(() => undefined);
       throw error;
+    } finally {
+      client.release();
     }
   }
 
-  getPendingAudit(
+  async getPendingAudit(
     now = currentTimestamp(),
     limit = 25,
-  ): AuditOutboxRecord[] {
-    return this.#database
-      .prepare(
-        `
-          SELECT
-            audit_outbox.id,
-            audit_outbox.event_id,
-            audit_outbox.user_id,
-            audit_outbox.action,
-            events.title,
-            events.guild_id,
-            events.announcement_channel_id,
-            events.message_id
-          FROM audit_outbox
-          JOIN events ON events.id = audit_outbox.event_id
-          WHERE
-            audit_outbox.sent_at IS NULL
-            AND audit_outbox.next_attempt_at <= ?
-            AND events.message_id IS NOT NULL
-          ORDER BY audit_outbox.id
-          LIMIT ?
-        `,
-      )
-      .all(now, limit) as unknown as AuditOutboxRecord[];
+  ): Promise<AuditOutboxRecord[]> {
+    const result = await this.#pool.query(
+      `
+        SELECT
+          audit_outbox.id,
+          audit_outbox.event_id,
+          audit_outbox.user_id,
+          audit_outbox.action,
+          events.title,
+          events.guild_id,
+          events.announcement_channel_id,
+          events.message_id
+        FROM audit_outbox
+        JOIN events ON events.id = audit_outbox.event_id
+        WHERE
+          audit_outbox.sent_at IS NULL
+          AND audit_outbox.next_attempt_at <= $1
+          AND events.message_id IS NOT NULL
+        ORDER BY audit_outbox.id
+        LIMIT $2
+      `,
+      [now, limit],
+    );
+    return result.rows as AuditOutboxRecord[];
   }
 
-  markAuditSent(id: number, now = currentTimestamp()): void {
-    this.#database
-      .prepare(
-        `
-          UPDATE audit_outbox
-          SET sent_at = ?, last_error = NULL
-          WHERE id = ? AND sent_at IS NULL
-        `,
-      )
-      .run(now, id);
+  async markAuditSent(
+    id: number,
+    now = currentTimestamp(),
+  ): Promise<void> {
+    await this.#pool.query(
+      `
+        UPDATE audit_outbox
+        SET sent_at = $1, last_error = NULL
+        WHERE id = $2 AND sent_at IS NULL
+      `,
+      [now, id],
+    );
   }
 
-  markAuditFailed(
+  async markAuditFailed(
     id: number,
     error: string,
     now = currentTimestamp(),
-  ): void {
-    const current = this.#database
-      .prepare("SELECT attempt_count FROM audit_outbox WHERE id = ?")
-      .get(id) as { attempt_count: number } | undefined;
-    const attempts = (current?.attempt_count ?? 0) + 1;
+  ): Promise<void> {
+    const current = await this.#pool.query(
+      "SELECT attempt_count FROM audit_outbox WHERE id = $1",
+      [id],
+    );
+    const attempts =
+      Number((current.rows[0] as { attempt_count: number } | undefined)
+        ?.attempt_count ?? 0) + 1;
     const delay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
 
-    this.#database
-      .prepare(
-        `
-          UPDATE audit_outbox
-          SET
-            attempt_count = ?,
-            next_attempt_at = ?,
-            last_error = ?
-          WHERE id = ? AND sent_at IS NULL
-        `,
-      )
-      .run(attempts, now + delay, error.slice(0, 1000), id);
+    await this.#pool.query(
+      `
+        UPDATE audit_outbox
+        SET
+          attempt_count = $1,
+          next_attempt_at = $2,
+          last_error = $3
+        WHERE id = $4 AND sent_at IS NULL
+      `,
+      [attempts, now + delay, error.slice(0, 1000), id],
+    );
   }
 
-  countRsvpHistory(eventId: number): number {
-    const row = this.#database
-      .prepare(
-        "SELECT COUNT(*) AS count FROM rsvp_history WHERE event_id = ?",
-      )
-      .get(eventId) as { count: number };
-    return row.count;
+  async countRsvpHistory(eventId: number): Promise<number> {
+    const result = await this.#pool.query(
+      "SELECT COUNT(*)::integer AS count FROM rsvp_history WHERE event_id = $1",
+      [eventId],
+    );
+    return (result.rows[0] as { count: number }).count;
+  }
+
+  async #getEvent(
+    database: Queryable,
+    id: number,
+    forUpdate = false,
+  ): Promise<EventRecord | undefined> {
+    const result = await database.query(
+      `SELECT * FROM events WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`,
+      [id],
+    );
+    return result.rows[0] as EventRecord | undefined;
+  }
+
+  async #getRsvpStatus(
+    database: Queryable,
+    eventId: number,
+    userId: string,
+  ): Promise<RsvpStatus | undefined> {
+    const result = await database.query(
+      "SELECT status FROM rsvps WHERE event_id = $1 AND user_id = $2",
+      [eventId, userId],
+    );
+    return (result.rows[0] as { status: RsvpStatus } | undefined)?.status;
   }
 }
 

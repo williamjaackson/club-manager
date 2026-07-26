@@ -32,7 +32,7 @@ export const config = {
   token: required("DISCORD_TOKEN"),
   guildId: process.env.DISCORD_GUILD_ID?.trim() || undefined,
   healthPort: port(process.env.HEALTH_PORT),
-  databasePath: process.env.DATABASE_PATH?.trim() || "/data/bot.sqlite",
+  databaseUrl: required("DATABASE_URL"),
   rsvpLogChannelId: snowflake(
     "RSVP_LOG_CHANNEL_ID",
     "1530755171645132921",

@@ -4,8 +4,8 @@ A Discord-native event announcement and RSVP bot for Griffith ICT Club.
 
 Administrators create an event with `/event create`, review a private preview,
 and publish it to a selected channel. Members RSVP through a button on the
-announcement. RSVP data is stored in SQLite and mirrored to a private audit
-channel.
+announcement. RSVP data is stored in Neon PostgreSQL and mirrored to a private
+audit channel.
 
 ## Current event flow
 
@@ -43,7 +43,7 @@ Each real state change creates an immutable audit message:
 @member cancelled their RSVP for Event Name.
 ```
 
-The message also links to the original announcement. SQLite is the source of
+The message also links to the original announcement. Neon is the source of
 truth. An outbox retries audit messages when Discord or the configured channel
 is temporarily unavailable.
 
@@ -59,7 +59,7 @@ cp .env.example .env
 DISCORD_TOKEN=replace-me
 DISCORD_GUILD_ID=replace-me
 RSVP_LOG_CHANNEL_ID=1530755171645132921
-DATABASE_PATH=/data/bot.sqlite
+DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 HEALTH_PORT=3000
 ```
 
@@ -81,17 +81,14 @@ docker compose up --build -d
 docker compose logs -f bot
 ```
 
-SQLite is stored in the `bot-data` named volume and survives container
-replacement.
+Events and RSVP state are stored in Neon PostgreSQL and survive container
+replacement and VPS restarts.
 
 Stop the bot with:
 
 ```sh
 docker compose down
 ```
-
-Do not add `--volumes` unless you intentionally want to delete the SQLite
-database.
 
 ## Development
 
@@ -102,12 +99,13 @@ Requirements:
 
 ```sh
 pnpm install
+pnpm run db:setup
 pnpm run check
 pnpm test
 pnpm run dev
 ```
 
-Or use the isolated development volume:
+Or use the development service:
 
 ```sh
 docker compose --profile dev run --rm bot-dev
@@ -115,12 +113,13 @@ docker compose --profile dev run --rm bot-dev
 
 ## Storage
 
-The SQLite database uses WAL mode and contains:
+The Neon PostgreSQL database contains:
 
 - Event drafts and published message references
 - Current RSVP state
 - Immutable RSVP/cancellation history
 - Pending and delivered audit notifications
+- Open event-creation forms, with a 15-minute expiry
 
 Pricing is presentation-only in this version. Every member currently sees the
 $5 price reduced to $0 as their first-event offer; there is no eligibility or

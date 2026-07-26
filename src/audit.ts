@@ -20,8 +20,14 @@ export class AuditLogger {
   start(): void {
     if (this.#timer) return;
 
-    void this.flush();
-    this.#timer = setInterval(() => void this.flush(), 30_000);
+    const flush = () => {
+      void this.flush().catch((error: unknown) => {
+        console.error("Failed to flush RSVP audit outbox", error);
+      });
+    };
+
+    flush();
+    this.#timer = setInterval(flush, 30_000);
     this.#timer.unref();
   }
 
@@ -43,16 +49,16 @@ export class AuditLogger {
   }
 
   async #flushPending(): Promise<void> {
-    const records = this.#store.getPendingAudit();
+    const records = await this.#store.getPendingAudit();
 
     for (const record of records) {
       try {
         await this.#send(record);
-        this.#store.markAuditSent(record.id);
+        await this.#store.markAuditSent(record.id);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`Failed to send RSVP audit ${record.id}`, error);
-        this.#store.markAuditFailed(record.id, message);
+        await this.#store.markAuditFailed(record.id, message);
       }
     }
   }
