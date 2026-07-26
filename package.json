@@ -1,20 +1,22 @@
 {
-  "name": "discord-bot-template",
+  "name": "club-manager",
   "version": "1.0.0",
   "private": true,
-  "description": "A Docker Compose-ready Discord bot template",
+  "description": "Discord-native event announcements and RSVP management",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "pnpm run build && node --test"
   },
   "dependencies": {
+    "@discordjs/builders": "^1.14.1",
     "discord.js": "^14.21.0"
   },
   "devDependencies": {

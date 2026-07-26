@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@discordjs/builders':
+        specifier: ^1.14.1
+        version: 1.14.1
       discord.js:
         specifier: ^14.21.0
         version: 14.27.0

@@ -1,5 +1,5 @@
 import {
-  ChatInputCommandInteraction,
+  PermissionFlagsBits,
   SlashCommandBuilder,
 } from "discord.js";
 
@@ -8,22 +8,20 @@ export const commandDefinitions = [
     .setName("ping")
     .setDescription("Check whether the bot is online")
     .toJSON(),
+  new SlashCommandBuilder()
+    .setName("event")
+    .setDescription("Create and manage club events")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("create")
+        .setDescription("Create a new event announcement")
+        .addAttachmentOption((option) =>
+          option
+            .setName("artwork")
+            .setDescription("Optional image shown below the announcement")
+            .setRequired(false),
+        ),
+    )
+    .toJSON(),
 ];
-
-export async function handleCommand(
-  interaction: ChatInputCommandInteraction,
-): Promise<void> {
-  switch (interaction.commandName) {
-    case "ping":
-      await interaction.reply({
-        content: `Pong! ${interaction.client.ws.ping}ms`,
-        ephemeral: true,
-      });
-      return;
-    default:
-      await interaction.reply({
-        content: "That command is not implemented.",
-        ephemeral: true,
-      });
-  }
-}

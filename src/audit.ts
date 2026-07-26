@@ -1,0 +1,87 @@
+import {
+  Client,
+  escapeMarkdown,
+} from "discord.js";
+import type { AuditOutboxRecord, Store } from "./database.js";
+
+export class AuditLogger {
+  readonly #client: Client;
+  readonly #store: Store;
+  readonly #channelId: string;
+  #timer: NodeJS.Timeout | undefined;
+  #running: Promise<void> | undefined;
+
+  constructor(client: Client, store: Store, channelId: string) {
+    this.#client = client;
+    this.#store = store;
+    this.#channelId = channelId;
+  }
+
+  start(): void {
+    if (this.#timer) return;
+
+    void this.flush();
+    this.#timer = setInterval(() => void this.flush(), 30_000);
+    this.#timer.unref();
+  }
+
+  stop(): void {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = undefined;
+  }
+
+  async flush(): Promise<void> {
+    if (this.#running) return this.#running;
+
+    this.#running = this.#flushPending();
+
+    try {
+      await this.#running;
+    } finally {
+      this.#running = undefined;
+    }
+  }
+
+  async #flushPending(): Promise<void> {
+    const records = this.#store.getPendingAudit();
+
+    for (const record of records) {
+      try {
+        await this.#send(record);
+        this.#store.markAuditSent(record.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to send RSVP audit ${record.id}`, error);
+        this.#store.markAuditFailed(record.id, message);
+      }
+    }
+  }
+
+  async #send(record: AuditOutboxRecord): Promise<void> {
+    const channel = await this.#client.channels.fetch(this.#channelId);
+
+    if (!channel?.isSendable()) {
+      throw new Error(
+        `RSVP log channel ${this.#channelId} is unavailable or not sendable`,
+      );
+    }
+
+    const action =
+      record.action === "rsvp"
+        ? "RSVP’d for"
+        : "cancelled their RSVP for";
+    const eventUrl =
+      `https://discord.com/channels/${record.guild_id}/` +
+      `${record.announcement_channel_id}/${record.message_id}`;
+
+    await channel.send({
+      content:
+        `<@${record.user_id}> ${action} ` +
+        `**${escapeMarkdown(record.title)}**. ${eventUrl}`,
+      allowedMentions: {
+        parse: [],
+        users: [record.user_id],
+      },
+    });
+  }
+}
