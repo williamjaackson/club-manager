@@ -11,6 +11,7 @@ import {
   ButtonStyle,
   ChannelType,
   TextInputStyle,
+  type InteractionEditReplyOptions,
   type InteractionReplyOptions,
   type MessageCreateOptions,
 } from "discord.js";
@@ -82,7 +83,9 @@ export function buildCreateEventModal(token: string): ModalBuilder {
     );
 }
 
-export function buildEventPreview(event: EventRecord): InteractionReplyOptions {
+export function buildEventPreview(
+  event: EventRecord,
+): InteractionEditReplyOptions {
   const publish = new ButtonBuilder()
     .setCustomId(`event:publish:${event.id}`)
     .setLabel("Publish")

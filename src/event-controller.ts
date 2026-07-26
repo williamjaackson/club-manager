@@ -102,7 +102,6 @@ export class EventController {
 
     const token = interaction.customId.slice("event:create:".length);
     const pending = this.#pendingCreates.get(token);
-    this.#pendingCreates.delete(token);
 
     if (
       !pending ||
@@ -115,6 +114,12 @@ export class EventController {
       });
       return true;
     }
+
+    // A preview with artwork can take longer than Discord's three-second
+    // interaction deadline while discord.js downloads and uploads the file.
+    // Acknowledge the submission before doing any preview work.
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    this.#pendingCreates.delete(token);
 
     if (!interaction.guildId) {
       throw new Error("Events can only be created inside a server.");
@@ -152,10 +157,7 @@ export class EventController {
 
     const event = this.#store.createEventDraft(draft);
 
-    await interaction.reply({
-      ...buildEventPreview(event),
-      flags: MessageFlags.Ephemeral,
-    });
+    await interaction.editReply(buildEventPreview(event));
     return true;
   }
 
