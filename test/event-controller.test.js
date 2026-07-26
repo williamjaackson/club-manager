@@ -24,7 +24,23 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
     created_at: 100,
     published_at: null,
   };
+  let pendingCreate;
   const store = {
+    createPendingEventCreate(pending) {
+      pendingCreate = {
+        token: pending.token,
+        user_id: pending.userId,
+        guild_id: pending.guildId,
+        artwork_url: pending.artworkUrl ?? null,
+        artwork_name: pending.artworkName ?? null,
+      };
+    },
+    getPendingEventCreate(token) {
+      return pendingCreate?.token === token ? pendingCreate : undefined;
+    },
+    deletePendingEventCreate(token) {
+      if (pendingCreate?.token === token) pendingCreate = undefined;
+    },
     createEventDraft(draft) {
       assert.equal(deferred, true);
       return { ...event, ...draft };
@@ -107,6 +123,7 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
   });
 
   assert.equal(deferred, true);
+  assert.equal(pendingCreate, undefined);
   assert.equal(preview.files.length, 1);
   assert.equal(preview.files[0].name, event.artwork_name);
 });

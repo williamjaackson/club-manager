@@ -16,6 +16,7 @@ import {
   EventUnavailableError,
   type EventRecord,
   type NewEventDraft,
+  type NewPendingEventCreate,
   type Store,
 } from "./database.js";
 import {
@@ -29,17 +30,9 @@ import {
   eventIds,
 } from "./event-ui.js";
 
-interface PendingCreate {
-  userId: string;
-  guildId: string;
-  artworkUrl?: string;
-  artworkName?: string;
-}
-
 export class EventController {
   readonly #store: Store;
   readonly #audit: AuditLogger;
-  readonly #pendingCreates = new Map<string, PendingCreate>();
 
   constructor(store: Store, audit: AuditLogger) {
     this.#store = store;
@@ -74,7 +67,8 @@ export class EventController {
     this.#validateArtwork(artwork);
 
     const token = randomBytes(16).toString("hex");
-    const pending: PendingCreate = {
+    const pending: NewPendingEventCreate = {
+      token,
       userId: interaction.user.id,
       guildId: interaction.guildId,
     };
@@ -84,12 +78,7 @@ export class EventController {
       pending.artworkName = safeAttachmentName(artwork.name);
     }
 
-    this.#pendingCreates.set(token, pending);
-    const cleanup = setTimeout(
-      () => this.#pendingCreates.delete(token),
-      15 * 60_000,
-    );
-    cleanup.unref();
+    this.#store.createPendingEventCreate(pending);
 
     await interaction.showModal(buildCreateEventModal(token));
     return true;
@@ -101,12 +90,12 @@ export class EventController {
     this.#requireAdministrator(interaction);
 
     const token = interaction.customId.slice("event:create:".length);
-    const pending = this.#pendingCreates.get(token);
+    const pending = this.#store.getPendingEventCreate(token);
 
     if (
       !pending ||
-      pending.userId !== interaction.user.id ||
-      pending.guildId !== interaction.guildId
+      pending.user_id !== interaction.user.id ||
+      pending.guild_id !== interaction.guildId
     ) {
       await interaction.reply({
         content: "This event form expired. Run `/event create` again.",
@@ -119,7 +108,7 @@ export class EventController {
     // interaction deadline while discord.js downloads and uploads the file.
     // Acknowledge the submission before doing any preview work.
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    this.#pendingCreates.delete(token);
+    this.#store.deletePendingEventCreate(token);
 
     if (!interaction.guildId) {
       throw new Error("Events can only be created inside a server.");
@@ -152,8 +141,8 @@ export class EventController {
         .trim(),
     };
 
-    if (pending.artworkUrl) draft.artworkUrl = pending.artworkUrl;
-    if (pending.artworkName) draft.artworkName = pending.artworkName;
+    if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
+    if (pending.artwork_name) draft.artworkName = pending.artwork_name;
 
     const event = this.#store.createEventDraft(draft);
 
