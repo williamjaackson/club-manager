@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
+import { newDb } from "pg-mem";
 import {
   EventUnavailableError,
+  setupDatabase,
   Store,
 } from "../dist/database.js";
 
-function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), "club-manager-test-"));
-  const store = new Store(join(directory, "bot.sqlite"));
-  const event = store.createEventDraft(
+async function fixture() {
+  const memory = newDb();
+  const adapter = memory.adapters.createPg();
+  const pool = new adapter.Pool();
+  await setupDatabase(pool);
+  const store = new Store(pool);
+  const event = await store.createEventDraft(
     {
       guildId: "12345678901234567",
       announcementChannelId: "22345678901234567",
@@ -25,52 +27,60 @@ function fixture() {
   );
 
   return {
-    directory,
     store,
     event,
-    close() {
-      store.close();
-      rmSync(directory, { recursive: true, force: true });
+    async close() {
+      await store.close();
     },
   };
 }
 
-test("publishes a draft exactly once", () => {
-  const context = fixture();
+test("publishes a draft exactly once", async () => {
+  const context = await fixture();
 
   try {
     assert.equal(context.event.status, "draft");
-    assert.equal(context.store.claimEventForPublishing(context.event.id), true);
-    assert.equal(context.store.claimEventForPublishing(context.event.id), false);
+    assert.equal(
+      await context.store.claimEventForPublishing(context.event.id),
+      true,
+    );
+    assert.equal(
+      await context.store.claimEventForPublishing(context.event.id),
+      false,
+    );
 
-    context.store.finishPublishing(context.event.id, "42345678901234567", 200);
-    const published = context.store.getEvent(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+    const published = await context.store.getEvent(context.event.id);
 
     assert.equal(published?.status, "published");
     assert.equal(published?.message_id, "42345678901234567");
     assert.equal(published?.published_at, 200);
   } finally {
-    context.close();
+    await context.close();
   }
 });
 
-test("records only real RSVP state changes and queues their audit trail", () => {
-  const context = fixture();
+test("records only real RSVP state changes and queues their audit trail", async () => {
+  const context = await fixture();
 
   try {
-    context.store.claimEventForPublishing(context.event.id);
-    context.store.finishPublishing(
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
       context.event.id,
       "42345678901234567",
       200,
     );
 
-    const confirmed = context.store.confirmRsvp(
+    const confirmed = await context.store.confirmRsvp(
       context.event.id,
       "52345678901234567",
       300,
     );
-    const duplicate = context.store.confirmRsvp(
+    const duplicate = await context.store.confirmRsvp(
       context.event.id,
       "52345678901234567",
       301,
@@ -78,14 +88,17 @@ test("records only real RSVP state changes and queues their audit trail", () => 
 
     assert.deepEqual(confirmed, { changed: true, status: "active" });
     assert.deepEqual(duplicate, { changed: false, status: "active" });
-    assert.equal(context.store.countRsvpHistory(context.event.id), 1);
+    assert.equal(
+      await context.store.countRsvpHistory(context.event.id),
+      1,
+    );
 
-    const cancellation = context.store.cancelRsvp(
+    const cancellation = await context.store.cancelRsvp(
       context.event.id,
       "52345678901234567",
       400,
     );
-    const duplicateCancellation = context.store.cancelRsvp(
+    const duplicateCancellation = await context.store.cancelRsvp(
       context.event.id,
       "52345678901234567",
       401,
@@ -99,45 +112,52 @@ test("records only real RSVP state changes and queues their audit trail", () => 
       changed: false,
       status: "cancelled",
     });
-    assert.equal(context.store.countRsvpHistory(context.event.id), 2);
+    assert.equal(
+      await context.store.countRsvpHistory(context.event.id),
+      2,
+    );
 
-    const audits = context.store.getPendingAudit(500);
+    const audits = await context.store.getPendingAudit(500);
     assert.deepEqual(
       audits.map(({ action }) => action),
       ["rsvp", "cancel"],
     );
     assert.equal(audits[0]?.message_id, "42345678901234567");
   } finally {
-    context.close();
+    await context.close();
   }
 });
 
-test("rejects RSVPs before an event is published", () => {
-  const context = fixture();
+test("rejects RSVPs before an event is published", async () => {
+  const context = await fixture();
 
   try {
-    assert.throws(
-      () =>
-        context.store.confirmRsvp(
-          context.event.id,
-          "52345678901234567",
-          300,
-        ),
+    await assert.rejects(
+      context.store.confirmRsvp(
+        context.event.id,
+        "52345678901234567",
+        300,
+      ),
       EventUnavailableError,
     );
-    assert.equal(context.store.countRsvpHistory(context.event.id), 0);
+    assert.equal(
+      await context.store.countRsvpHistory(context.event.id),
+      0,
+    );
   } finally {
-    context.close();
+    await context.close();
   }
 });
 
-test("keeps open event forms across database restarts", () => {
-  const directory = mkdtempSync(join(tmpdir(), "club-manager-test-"));
-  const path = join(directory, "bot.sqlite");
-  let store = new Store(path);
+test("keeps open event forms across database pool restarts", async () => {
+  const memory = newDb();
+  const adapter = memory.adapters.createPg();
+  let pool = new adapter.Pool();
+  await setupDatabase(pool);
+  let store = new Store(pool);
 
   try {
-    store.createPendingEventCreate(
+    await store.createPendingEventCreate(
       {
         token: "persistent-form",
         userId: "12345678901234567",
@@ -148,26 +168,43 @@ test("keeps open event forms across database restarts", () => {
       100,
       900,
     );
-    store.close();
+    await store.close();
 
-    store = new Store(path);
-    const pending = store.getPendingEventCreate("persistent-form", 200);
+    pool = new adapter.Pool();
+    store = new Store(pool);
+    const pending = await store.getPendingEventCreate(
+      "persistent-form",
+      200,
+    );
 
     assert.equal(pending?.user_id, "12345678901234567");
     assert.equal(pending?.guild_id, "22345678901234567");
     assert.equal(pending?.artwork_name, "artwork.png");
     assert.equal(
-      store.getPendingEventCreate("persistent-form", 1_000),
+      await store.getPendingEventCreate("persistent-form", 1_000),
       undefined,
     );
-
-    store.deletePendingEventCreate("persistent-form");
     assert.equal(
-      store.getPendingEventCreate("persistent-form", 200),
+      await store.consumePendingEventCreate(
+        "persistent-form",
+        "wrong-user",
+        "22345678901234567",
+        200,
+      ),
+      undefined,
+    );
+    const consumed = await store.consumePendingEventCreate(
+      "persistent-form",
+      "12345678901234567",
+      "22345678901234567",
+      200,
+    );
+    assert.equal(consumed?.artwork_name, "artwork.png");
+    assert.equal(
+      await store.getPendingEventCreate("persistent-form", 200),
       undefined,
     );
   } finally {
-    store.close();
-    rmSync(directory, { recursive: true, force: true });
+    await store.close();
   }
 });

@@ -7,6 +7,7 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
   let modal;
   let deferred = false;
   let preview;
+  let finishPendingSave;
 
   const event = {
     id: 42,
@@ -34,12 +35,23 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
         artwork_url: pending.artworkUrl ?? null,
         artwork_name: pending.artworkName ?? null,
       };
+      return new Promise((resolve) => {
+        finishPendingSave = resolve;
+      });
     },
-    getPendingEventCreate(token) {
-      return pendingCreate?.token === token ? pendingCreate : undefined;
-    },
-    deletePendingEventCreate(token) {
-      if (pendingCreate?.token === token) pendingCreate = undefined;
+    consumePendingEventCreate(token, userId, guildId) {
+      assert.equal(deferred, true);
+      if (
+        pendingCreate?.token !== token ||
+        pendingCreate.user_id !== userId ||
+        pendingCreate.guild_id !== guildId
+      ) {
+        return undefined;
+      }
+
+      const consumed = pendingCreate;
+      pendingCreate = undefined;
+      return consumed;
     },
     createEventDraft(draft) {
       assert.equal(deferred, true);
@@ -75,6 +87,7 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
     },
     async showModal(value) {
       modal = value.toJSON();
+      finishPendingSave();
     },
   });
 

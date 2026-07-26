@@ -78,9 +78,10 @@ export class EventController {
       pending.artworkName = safeAttachmentName(artwork.name);
     }
 
-    this.#store.createPendingEventCreate(pending);
-
-    await interaction.showModal(buildCreateEventModal(token));
+    await Promise.all([
+      this.#store.createPendingEventCreate(pending),
+      interaction.showModal(buildCreateEventModal(token)),
+    ]);
     return true;
   }
 
@@ -90,25 +91,19 @@ export class EventController {
     this.#requireAdministrator(interaction);
 
     const token = interaction.customId.slice("event:create:".length);
-    const pending = this.#store.getPendingEventCreate(token);
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const pending = await this.#store.consumePendingEventCreate(
+      token,
+      interaction.user.id,
+      interaction.guildId,
+    );
 
-    if (
-      !pending ||
-      pending.user_id !== interaction.user.id ||
-      pending.guild_id !== interaction.guildId
-    ) {
-      await interaction.reply({
+    if (!pending) {
+      await interaction.editReply({
         content: "This event form expired. Run `/event create` again.",
-        flags: MessageFlags.Ephemeral,
       });
       return true;
     }
-
-    // A preview with artwork can take longer than Discord's three-second
-    // interaction deadline while discord.js downloads and uploads the file.
-    // Acknowledge the submission before doing any preview work.
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    this.#store.deletePendingEventCreate(token);
 
     if (!interaction.guildId) {
       throw new Error("Events can only be created inside a server.");
@@ -144,7 +139,7 @@ export class EventController {
     if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
     if (pending.artwork_name) draft.artworkName = pending.artwork_name;
 
-    const event = this.#store.createEventDraft(draft);
+    const event = await this.#store.createEventDraft(draft);
 
     await interaction.editReply(buildEventPreview(event));
     return true;
@@ -154,12 +149,18 @@ export class EventController {
     const parsed = parseEventButton(interaction.customId);
     if (!parsed) return false;
 
-    const event = this.#store.getEvent(parsed.eventId);
+    if (parsed.action === "rsvp") {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } else {
+      await interaction.deferUpdate();
+    }
+
+    const event = await this.#store.getEvent(parsed.eventId);
 
     if (!event) {
-      await interaction.reply({
+      await interaction.editReply({
         content: "That event no longer exists.",
-        flags: MessageFlags.Ephemeral,
+        components: [],
       });
       return true;
     }
@@ -185,7 +186,7 @@ export class EventController {
         await this.#cancelRsvp(interaction, event);
         return true;
       case "dismiss":
-        await interaction.update({
+        await interaction.editReply({
           content: "No RSVP was recorded.",
           embeds: [],
           components: [],
@@ -200,8 +201,8 @@ export class EventController {
   ): Promise<void> {
     this.#requireAdministrator(interaction);
 
-    if (!this.#store.claimEventForPublishing(event.id)) {
-      await interaction.update({
+    if (!(await this.#store.claimEventForPublishing(event.id))) {
+      await interaction.editReply({
         content: "This draft has already been published or discarded.",
         embeds: [],
         components: [],
@@ -209,7 +210,6 @@ export class EventController {
       return;
     }
 
-    await interaction.deferUpdate();
     let message;
 
     try {
@@ -222,9 +222,9 @@ export class EventController {
       }
 
       message = await channel.send(buildPublicEventMessage(event));
-      this.#store.finishPublishing(event.id, message.id);
+      await this.#store.finishPublishing(event.id, message.id);
     } catch (error) {
-      this.#store.releaseEventForPublishing(event.id);
+      await this.#store.releaseEventForPublishing(event.id);
 
       if (message) {
         await message.delete().catch(() => undefined);
@@ -256,9 +256,9 @@ export class EventController {
     event: EventRecord,
   ): Promise<void> {
     this.#requireAdministrator(interaction);
-    const discarded = this.#store.discardEventDraft(event.id);
+    const discarded = await this.#store.discardEventDraft(event.id);
 
-    await interaction.update({
+    await interaction.editReply({
       content: discarded
         ? `Discarded the draft for **${event.title}**.`
         : "This draft has already been published or discarded.",
@@ -278,22 +278,26 @@ export class EventController {
       throw new Error("Use the RSVP button on the original announcement.");
     }
 
-    const status = this.#store.getRsvpStatus(event.id, interaction.user.id);
+    const status = await this.#store.getRsvpStatus(
+      event.id,
+      interaction.user.id,
+    );
 
-    await interaction.reply({
-      ...(status === "active"
+    await interaction.editReply(
+      status === "active"
         ? buildCurrentRsvp(event)
-        : buildRsvpPrompt(event)),
-      flags: MessageFlags.Ephemeral,
-    });
+        : buildRsvpPrompt(event),
+    );
   }
 
   async #confirmRsvp(
     interaction: ButtonInteraction,
     event: EventRecord,
   ): Promise<void> {
-    await interaction.deferUpdate();
-    const result = this.#store.confirmRsvp(event.id, interaction.user.id);
+    const result = await this.#store.confirmRsvp(
+      event.id,
+      interaction.user.id,
+    );
     await interaction.editReply(buildRsvpComplete(event, result.changed));
     void this.#audit.flush();
   }
@@ -302,8 +306,10 @@ export class EventController {
     interaction: ButtonInteraction,
     event: EventRecord,
   ): Promise<void> {
-    await interaction.deferUpdate();
-    const result = this.#store.cancelRsvp(event.id, interaction.user.id);
+    const result = await this.#store.cancelRsvp(
+      event.id,
+      interaction.user.id,
+    );
     await interaction.editReply(
       buildCancellationComplete(event, result.changed),
     );
