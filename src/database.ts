@@ -39,6 +39,24 @@ export interface NewEventDraft {
   artworkName?: string;
 }
 
+export interface PendingEventCreateRecord {
+  token: string;
+  user_id: string;
+  guild_id: string;
+  artwork_url: string | null;
+  artwork_name: string | null;
+  created_at: number;
+  expires_at: number;
+}
+
+export interface NewPendingEventCreate {
+  token: string;
+  userId: string;
+  guildId: string;
+  artworkUrl?: string;
+  artworkName?: string;
+}
+
 export interface AuditOutboxRecord {
   id: number;
   event_id: number;
@@ -92,6 +110,16 @@ export class Store {
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at INTEGER NOT NULL,
         published_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS pending_event_creates (
+        token TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        guild_id TEXT NOT NULL,
+        artwork_url TEXT,
+        artwork_name TEXT,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS rsvps (
@@ -173,6 +201,60 @@ export class Store {
     return this.#database
       .prepare("SELECT * FROM events WHERE id = ?")
       .get(id) as EventRecord | undefined;
+  }
+
+  createPendingEventCreate(
+    pending: NewPendingEventCreate,
+    now = currentTimestamp(),
+    lifetimeSeconds = 15 * 60,
+  ): void {
+    this.#database
+      .prepare("DELETE FROM pending_event_creates WHERE expires_at <= ?")
+      .run(now);
+    this.#database
+      .prepare(
+        `
+          INSERT INTO pending_event_creates (
+            token,
+            user_id,
+            guild_id,
+            artwork_url,
+            artwork_name,
+            created_at,
+            expires_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        pending.token,
+        pending.userId,
+        pending.guildId,
+        pending.artworkUrl ?? null,
+        pending.artworkName ?? null,
+        now,
+        now + lifetimeSeconds,
+      );
+  }
+
+  getPendingEventCreate(
+    token: string,
+    now = currentTimestamp(),
+  ): PendingEventCreateRecord | undefined {
+    return this.#database
+      .prepare(
+        `
+          SELECT *
+          FROM pending_event_creates
+          WHERE token = ? AND expires_at > ?
+        `,
+      )
+      .get(token, now) as PendingEventCreateRecord | undefined;
+  }
+
+  deletePendingEventCreate(token: string): void {
+    this.#database
+      .prepare("DELETE FROM pending_event_creates WHERE token = ?")
+      .run(token);
   }
 
   claimEventForPublishing(id: number): boolean {

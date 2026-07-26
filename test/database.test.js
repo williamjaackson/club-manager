@@ -130,3 +130,44 @@ test("rejects RSVPs before an event is published", () => {
     context.close();
   }
 });
+
+test("keeps open event forms across database restarts", () => {
+  const directory = mkdtempSync(join(tmpdir(), "club-manager-test-"));
+  const path = join(directory, "bot.sqlite");
+  let store = new Store(path);
+
+  try {
+    store.createPendingEventCreate(
+      {
+        token: "persistent-form",
+        userId: "12345678901234567",
+        guildId: "22345678901234567",
+        artworkUrl: "https://cdn.discordapp.com/artwork.png",
+        artworkName: "artwork.png",
+      },
+      100,
+      900,
+    );
+    store.close();
+
+    store = new Store(path);
+    const pending = store.getPendingEventCreate("persistent-form", 200);
+
+    assert.equal(pending?.user_id, "12345678901234567");
+    assert.equal(pending?.guild_id, "22345678901234567");
+    assert.equal(pending?.artwork_name, "artwork.png");
+    assert.equal(
+      store.getPendingEventCreate("persistent-form", 1_000),
+      undefined,
+    );
+
+    store.deletePendingEventCreate("persistent-form");
+    assert.equal(
+      store.getPendingEventCreate("persistent-form", 200),
+      undefined,
+    );
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
