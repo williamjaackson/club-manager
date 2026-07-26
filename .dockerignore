@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+!.env.example
+node_modules
+.pnpm-store
+dist
+npm-debug.log*
+pnpm-debug.log*
+README.md

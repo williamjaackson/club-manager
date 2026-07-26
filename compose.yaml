@@ -1,0 +1,32 @@
+services:
+  bot:
+    build:
+      context: .
+      target: production
+    env_file:
+      - .env
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.HEALTH_PORT || 3000) + '/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  bot-dev:
+    profiles: ["dev"]
+    build:
+      context: .
+      target: development
+    env_file:
+      - .env
+    init: true
+    volumes:
+      - ./src:/app/src
+      - ./tsconfig.json:/app/tsconfig.json:ro
+    command: pnpm run dev
