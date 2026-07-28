@@ -140,3 +140,46 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
   assert.equal(preview.files.length, 1);
   assert.equal(preview.files[0].name, event.artwork_name);
 });
+
+test("requires a connected or exempt role before showing the RSVP confirmation", async () => {
+  const event = { id: 42, guild_id: "12345678901234567", announcement_channel_id: "22345678901234567", message_id: "42345678901234567", creator_id: "32345678901234567", title: "Test event", schedule_text: "Saturday", location: "Gold Coast", announcement: "Test.", artwork_url: null, artwork_name: null, status: "published", created_at: 100, published_at: 101 };
+  let reply;
+  const controller = new EventController({
+    async getEvent() { return event; },
+    async getRsvpStatus() { assert.fail("ineligible members must not reach the RSVP lookup"); },
+  }, {});
+
+  await controller.handleButton({
+    customId: `event:rsvp:${event.id}`,
+    guildId: event.guild_id,
+    user: { id: "42345678901234567" },
+    message: { id: event.message_id },
+    member: { roles: [] },
+    async deferReply(options) { assert.equal(options.flags, MessageFlags.Ephemeral); },
+    async editReply(options) { reply = options; },
+  });
+
+  assert.match(reply.content, /please verify first/i);
+  assert.match(reply.content, /1348722902375071785/);
+});
+
+test("checks RSVP eligibility again when confirming", async () => {
+  const event = { id: 42, guild_id: "12345678901234567", announcement_channel_id: "22345678901234567", message_id: "42345678901234567", creator_id: "32345678901234567", title: "Test event", schedule_text: "Saturday", location: "Gold Coast", announcement: "Test.", artwork_url: null, artwork_name: null, status: "published", created_at: 100, published_at: 101 };
+  let reply;
+  const controller = new EventController({
+    async getEvent() { return event; },
+    async confirmRsvp() { assert.fail("ineligible members must not be recorded as RSVP'd"); },
+  }, {});
+
+  await controller.handleButton({
+    customId: `event:rsvp-confirm:${event.id}`,
+    guildId: event.guild_id,
+    user: { id: "42345678901234567" },
+    member: { roles: [] },
+    async deferUpdate() {},
+    async editReply(options) { reply = options; },
+  });
+
+  assert.match(reply.content, /please verify first/i);
+  assert.match(reply.content, /1348722902375071785/);
+});

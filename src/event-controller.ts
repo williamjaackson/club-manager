@@ -12,6 +12,7 @@ import {
   type ModalSubmitInteraction,
 } from "discord.js";
 import type { AuditLogger } from "./audit.js";
+import { rsvpEligibility } from "./rsvp-eligibility.js";
 import {
   EventUnavailableError,
   type EventRecord,
@@ -278,6 +279,11 @@ export class EventController {
       throw new Error("Use the RSVP button on the original announcement.");
     }
 
+    if (!this.#canRsvp(interaction)) {
+      await interaction.editReply(this.#verificationRequiredReply());
+      return;
+    }
+
     const status = await this.#store.getRsvpStatus(
       event.id,
       interaction.user.id,
@@ -294,6 +300,11 @@ export class EventController {
     interaction: ButtonInteraction,
     event: EventRecord,
   ): Promise<void> {
+    if (!this.#canRsvp(interaction)) {
+      await interaction.editReply(this.#verificationRequiredReply());
+      return;
+    }
+
     const result = await this.#store.confirmRsvp(
       event.id,
       interaction.user.id,
@@ -334,6 +345,30 @@ export class EventController {
     if (event.status !== "published" || !event.message_id) {
       throw new EventUnavailableError();
     }
+  }
+
+  #canRsvp(interaction: ButtonInteraction): boolean {
+    const roles = interaction.member?.roles;
+    if (!roles) return false;
+
+    const allowedRoleIds = [
+      rsvpEligibility.connectedRoleId,
+      rsvpEligibility.exemptRoleId,
+    ];
+
+    return Array.isArray(roles)
+      ? allowedRoleIds.some((roleId) => roles.includes(roleId))
+      : allowedRoleIds.some((roleId) => roles.cache.has(roleId));
+  }
+
+  #verificationRequiredReply(): { content: string; embeds: []; components: [] } {
+    return {
+      content:
+        "Hey, please verify first, then try RSVPing again: " +
+        "https://discord.com/channels/1214387742293626940/1257896790934421535/1348722902375071785",
+      embeds: [],
+      components: [],
+    };
   }
 
   #validateArtwork(artwork: Attachment | null): void {
