@@ -73,6 +73,12 @@ The bot requires these permissions in announcement and audit channels:
 - Send Messages
 - Embed Links
 - Attach Files
+- Manage Webhooks (announcement channels only)
+
+Published announcements are sent through a bot-owned webhook using the
+publishing administrator's server display name and profile picture. The bot
+reuses its event webhook in each announcement channel and creates it on the
+first publish when needed.
 
 ## Run with Docker Compose
 

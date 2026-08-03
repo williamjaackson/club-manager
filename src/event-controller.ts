@@ -6,10 +6,14 @@ import {
   ChannelType,
   MessageFlags,
   PermissionFlagsBits,
+  WebhookType,
   type Attachment,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type ModalSubmitInteraction,
+  type NewsChannel,
+  type TextChannel,
+  type Webhook,
 } from "discord.js";
 import type { AuditLogger } from "./audit.js";
 import { rsvpEligibility } from "./rsvp-eligibility.js";
@@ -34,6 +38,10 @@ import {
 export class EventController {
   readonly #store: Store;
   readonly #audit: AuditLogger;
+  readonly #webhookLookups = new Map<
+    string,
+    Promise<Webhook<WebhookType.Incoming>>
+  >();
 
   constructor(store: Store, audit: AuditLogger) {
     this.#store = store;
@@ -212,23 +220,36 @@ export class EventController {
     }
 
     let message;
+    let webhook: Webhook<WebhookType.Incoming> | undefined;
 
     try {
       const channel = await interaction.client.channels.fetch(
         event.announcement_channel_id,
       );
 
-      if (!channel?.isSendable()) {
+      if (
+        channel?.type !== ChannelType.GuildText &&
+        channel?.type !== ChannelType.GuildAnnouncement
+      ) {
         throw new Error("The announcement channel is unavailable.");
       }
 
-      message = await channel.send(buildPublicEventMessage(event));
+      webhook = await this.#getOrCreateEventWebhook(
+        channel,
+        interaction.client.user.id,
+      );
+      const identity = commandRunnerIdentity(interaction);
+      message = await webhook.send({
+        ...buildPublicEventMessage(event),
+        ...identity,
+        withComponents: true,
+      });
       await this.#store.finishPublishing(event.id, message.id);
     } catch (error) {
       await this.#store.releaseEventForPublishing(event.id);
 
-      if (message) {
-        await message.delete().catch(() => undefined);
+      if (message && webhook) {
+        await webhook.deleteMessage(message.id).catch(() => undefined);
       }
 
       throw error;
@@ -249,6 +270,46 @@ export class EventController {
             .setStyle(ButtonStyle.Link),
         ),
       ],
+    });
+  }
+
+  async #getOrCreateEventWebhook(
+    channel: TextChannel | NewsChannel,
+    botUserId: string,
+  ): Promise<Webhook<WebhookType.Incoming>> {
+    const existingLookup = this.#webhookLookups.get(channel.id);
+    if (existingLookup) return existingLookup;
+
+    const lookup = this.#findOrCreateEventWebhook(channel, botUserId);
+    this.#webhookLookups.set(channel.id, lookup);
+
+    try {
+      return await lookup;
+    } finally {
+      if (this.#webhookLookups.get(channel.id) === lookup) {
+        this.#webhookLookups.delete(channel.id);
+      }
+    }
+  }
+
+  async #findOrCreateEventWebhook(
+    channel: TextChannel | NewsChannel,
+    botUserId: string,
+  ): Promise<Webhook<WebhookType.Incoming>> {
+    const webhooks = await channel.fetchWebhooks();
+    const existing = webhooks.find(
+      (candidate) =>
+        candidate.name === eventWebhookName &&
+        candidate.owner?.id === botUserId &&
+        candidate.isIncoming() &&
+        Boolean(candidate.token),
+    );
+
+    if (existing?.isIncoming()) return existing;
+
+    return channel.createWebhook({
+      name: eventWebhookName,
+      reason: "Publish event announcements as the command runner",
     });
   }
 
@@ -412,4 +473,28 @@ function safeAttachmentName(name: string): string {
     .replaceAll(/-+/g, "-")
     .slice(-100);
   return sanitized || "event-artwork.png";
+}
+
+const eventWebhookName = "Club Manager Event Announcements";
+
+function commandRunnerIdentity(interaction: ButtonInteraction): {
+  username: string;
+  avatarURL: string;
+} {
+  const member = interaction.member;
+  const cachedMember =
+    member && "displayName" in member && "displayAvatarURL" in member
+      ? member
+      : undefined;
+
+  return {
+    username:
+      cachedMember?.displayName ??
+      (member && "nick" in member ? member.nick : undefined) ??
+      interaction.user.globalName ??
+      interaction.user.username,
+    avatarURL:
+      cachedMember?.displayAvatarURL({ extension: "png", size: 256 }) ??
+      interaction.user.displayAvatarURL({ extension: "png", size: 256 }),
+  };
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { MessageFlags } from "discord.js";
+import { ChannelType, MessageFlags } from "discord.js";
 import { EventController } from "../dist/event-controller.js";
 
 test("acknowledges a modal before preparing its artwork preview", async () => {
@@ -183,3 +183,127 @@ test("checks RSVP eligibility again when confirming", async () => {
   assert.match(reply.content, /please verify first/i);
   assert.match(reply.content, /1348722902375071785/);
 });
+
+test("publishes through a new webhook as the command runner", async () => {
+  const event = eventDraft(42);
+  let createdWebhook;
+  let sent;
+  let publishedMessageId;
+  let webhookCreates = 0;
+  const webhook = {
+    async send(options) {
+      sent = options;
+      return { id: "52345678901234567" };
+    },
+    async deleteMessage() {
+      assert.fail("successful webhook messages must not be deleted");
+    },
+  };
+  const channel = {
+    id: event.announcement_channel_id,
+    type: ChannelType.GuildText,
+    async fetchWebhooks() {
+      return { find() { return undefined; } };
+    },
+    async createWebhook(options) {
+      webhookCreates += 1;
+      createdWebhook = options;
+      return webhook;
+    },
+    async send() {
+      assert.fail("event announcements must not be sent as the bot");
+    },
+  };
+  const controller = new EventController({
+    async getEvent() { return event; },
+    async claimEventForPublishing() { return true; },
+    async finishPublishing(_eventId, messageId) { publishedMessageId = messageId; },
+  }, {});
+  let reply;
+
+  await controller.handleButton(publishInteraction(event, channel, (options) => { reply = options; }));
+
+  assert.equal(webhookCreates, 1);
+  assert.equal(createdWebhook.name, "Club Manager Event Announcements");
+  assert.equal(sent.username, "Event Admin");
+  assert.equal(sent.avatarURL, "https://cdn.example/admin-server-avatar.png");
+  assert.equal(sent.withComponents, true);
+  assert.equal(sent.components.length, 1);
+  assert.equal(publishedMessageId, "52345678901234567");
+  assert.match(reply.content, /Published/);
+});
+
+test("reuses the bot-owned event webhook", async () => {
+  const event = eventDraft(43);
+  let sends = 0;
+  const webhook = {
+    name: "Club Manager Event Announcements",
+    owner: { id: "62345678901234567" },
+    token: "webhook-token",
+    isIncoming() { return true; },
+    async send() { sends += 1; return { id: "72345678901234567" }; },
+  };
+  const channel = {
+    id: event.announcement_channel_id,
+    type: ChannelType.GuildAnnouncement,
+    async fetchWebhooks() {
+      return { find(predicate) { return predicate(webhook) ? webhook : undefined; } };
+    },
+    async createWebhook() {
+      assert.fail("an existing bot-owned event webhook should be reused");
+    },
+  };
+  const controller = new EventController({
+    async getEvent() { return event; },
+    async claimEventForPublishing() { return true; },
+    async finishPublishing() {},
+  }, {});
+
+  await controller.handleButton(publishInteraction(event, channel, () => {}));
+
+  assert.equal(sends, 1);
+});
+
+function eventDraft(id) {
+  return {
+    id,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: null,
+    creator_id: "32345678901234567",
+    title: "Test event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    status: "draft",
+    created_at: 100,
+    published_at: null,
+  };
+}
+
+function publishInteraction(event, channel, editReply) {
+  return {
+    customId: `event:publish:${event.id}`,
+    guildId: event.guild_id,
+    user: {
+      id: event.creator_id,
+      globalName: "Global Admin",
+      username: "admin",
+      displayAvatarURL() { return "https://cdn.example/admin-avatar.png"; },
+    },
+    member: {
+      displayName: "Event Admin",
+      displayAvatarURL() { return "https://cdn.example/admin-server-avatar.png"; },
+    },
+    memberPermissions: { has() { return true; } },
+    inGuild() { return true; },
+    client: {
+      user: { id: "62345678901234567" },
+      channels: { async fetch() { return channel; } },
+    },
+    async deferUpdate() {},
+    async editReply(options) { editReply(options); },
+  };
+}
