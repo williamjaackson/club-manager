@@ -1,5 +1,6 @@
 import { neonConfig, Pool, type PoolClient } from "@neondatabase/serverless";
 import ws from "ws";
+import { estimateStripeFeeCents } from "./money.js";
 import { currentTimestamp, formatScheduleText } from "./time.js";
 
 neonConfig.webSocketConstructor = ws;
@@ -156,6 +157,7 @@ export interface TicketOrderRecord {
   reservation_expires_at: number;
   paid_at: number | null;
   refunded_at: number | null;
+  checkout_expired_at: number | null;
 }
 
 export interface TicketCheckoutReservation {
@@ -420,6 +422,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS stripe_charge_id TEXT;
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT;
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS refunded_at DOUBLE PRECISION;
+      ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS checkout_expired_at DOUBLE PRECISION;
       ALTER TABLE ticket_orders DROP CONSTRAINT IF EXISTS ticket_orders_status_check;
       ALTER TABLE ticket_orders ADD CONSTRAINT ticket_orders_status_check
         CHECK (status IN ('pending', 'paid', 'refunded'));
@@ -1103,7 +1106,7 @@ export class Store {
     eventId: number,
     userId: string,
     now = currentTimestamp(),
-    checkoutLifetimeSeconds = 31 * 60,
+    checkoutLifetimeSeconds = 10 * 60,
     webhookGraceSeconds = 5 * 60,
   ): Promise<TicketCheckoutReservation> {
     const client = await this.#pool.connect();
@@ -1191,7 +1194,8 @@ export class Store {
               checkout_expires_at = $2,
               reservation_expires_at = $3,
               paid_at = NULL,
-              refunded_at = NULL
+              refunded_at = NULL,
+              checkout_expired_at = NULL
             WHERE id = $4
             RETURNING *
           `,
@@ -1258,6 +1262,51 @@ export class Store {
     }
 
     return order;
+  }
+
+  // Pending orders whose 10-minute reservation lapsed but whose Stripe
+  // session (30-minute Stripe minimum) is still technically alive.
+  async getLapsedCheckouts(
+    now = currentTimestamp(),
+    limit = 25,
+  ): Promise<{ orderId: number; checkoutSessionId: string; testMode: boolean }[]> {
+    const result = await this.#pool.query(
+      `
+        SELECT ticket_orders.id, ticket_orders.checkout_session_id, events.test_mode
+        FROM ticket_orders
+        JOIN events ON events.id = ticket_orders.event_id
+        WHERE
+          ticket_orders.status = 'pending'
+          AND ticket_orders.checkout_session_id IS NOT NULL
+          AND ticket_orders.checkout_expires_at <= $1
+          AND ticket_orders.checkout_expired_at IS NULL
+        ORDER BY ticket_orders.checkout_expires_at
+        LIMIT $2
+      `,
+      [now, limit],
+    );
+    return (
+      result.rows as {
+        id: number;
+        checkout_session_id: string;
+        test_mode: boolean;
+      }[]
+    ).map((row) => ({
+      orderId: row.id,
+      checkoutSessionId: row.checkout_session_id,
+      testMode: row.test_mode,
+    }));
+  }
+
+  async markCheckoutExpired(orderId: number, now = currentTimestamp()): Promise<void> {
+    await this.#pool.query(
+      `
+        UPDATE ticket_orders
+        SET checkout_expired_at = $1, updated_at = $1
+        WHERE id = $2 AND status = 'pending'
+      `,
+      [now, orderId],
+    );
   }
 
   async fulfillTicketOrder(
@@ -2126,40 +2175,54 @@ export class Store {
   async getEventAttendance(
     eventId: number,
     now = currentTimestamp(),
-  ): Promise<{ going: number }> {
+  ): Promise<{ going: number; held: number }> {
     const event = await this.#getEvent(this.#pool, eventId);
-    if (!event) return { going: 0 };
+    if (!event) return { going: 0, held: 0 };
 
-    const result =
-      event.ticket_price_cents !== null
-        ? await this.#pool.query(
-            `
-              SELECT COUNT(*)::integer AS count
-              FROM ticket_orders
-              WHERE
-                event_id = $1
-                AND (
-                  status = 'paid'
-                  OR (status = 'pending' AND reservation_expires_at > $2)
-                )
-            `,
-            [eventId, now],
-          )
-        : await this.#pool.query(
-            `
-              SELECT COUNT(*)::integer AS count
-              FROM rsvps
-              WHERE event_id = $1 AND status = 'active'
-            `,
-            [eventId],
-          );
-    return { going: Number((result.rows[0] as { count: number }).count) };
+    if (event.ticket_price_cents === null) {
+      const result = await this.#pool.query(
+        `
+          SELECT COUNT(*)::integer AS count
+          FROM rsvps
+          WHERE event_id = $1 AND status = 'active'
+        `,
+        [eventId],
+      );
+      return { going: Number((result.rows[0] as { count: number }).count), held: 0 };
+    }
+
+    const [paid, pending] = await Promise.all([
+      this.#pool.query(
+        `
+          SELECT COUNT(*)::integer AS count
+          FROM ticket_orders
+          WHERE event_id = $1 AND status = 'paid'
+        `,
+        [eventId],
+      ),
+      this.#pool.query(
+        `
+          SELECT COUNT(*)::integer AS count
+          FROM ticket_orders
+          WHERE
+            event_id = $1
+            AND status = 'pending'
+            AND reservation_expires_at > $2
+        `,
+        [eventId, now],
+      ),
+    ]);
+    const held = Number((pending.rows[0] as { count: number }).count);
+    return {
+      going: Number((paid.rows[0] as { count: number }).count) + held,
+      held,
+    };
   }
 
   async previewPriceDropRefunds(
     eventId: number,
     newPriceCents: number,
-  ): Promise<{ count: number; totalCents: number }> {
+  ): Promise<{ count: number; totalCents: number; feeEstimateCents: number }> {
     const result = await this.#pool.query(
       `
         SELECT amount_total
@@ -2173,6 +2236,10 @@ export class Store {
       count: rows.length,
       totalCents: rows.reduce(
         (total, row) => total + (Number(row.amount_total) - newPriceCents),
+        0,
+      ),
+      feeEstimateCents: rows.reduce(
+        (total, row) => total + estimateStripeFeeCents(Number(row.amount_total)),
         0,
       ),
     };

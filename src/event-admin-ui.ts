@@ -123,8 +123,14 @@ export function buildCancelConfirm(
   event: EventRecord,
   paidCount: number,
   refundTotalCents: number,
+  feeEstimateCents = 0,
 ): EventReplyOptions {
   const currency = event.ticket_currency ?? "aud";
+  const feeNote =
+    feeEstimateCents > 0
+      ? `-# Stripe does not return the original processing fees when refunding ` +
+        `(~${formatCurrencyAmount(feeEstimateCents, currency)} across these tickets).`
+      : "-# Stripe does not return the original processing fees when refunding.";
   const refundText =
     paidCount > 0
       ? `Every attendee is notified by DM and **${formatCurrencyAmount(
@@ -132,7 +138,7 @@ export function buildCancelConfirm(
           currency,
         )}** is refunded in full across **${paidCount}** ticket${
           paidCount === 1 ? "" : "s"
-        }.\n-# Stripe does not return the original processing fees when refunding.`
+        }.\n${feeNote}`
       : "Every attendee is notified by DM. No paid tickets need refunding.";
   return {
     content:

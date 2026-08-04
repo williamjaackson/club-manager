@@ -18,7 +18,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import type { EventRecord, PendingEventCreateRecord } from "./database.js";
-import { formatCurrencyAmount } from "./money.js";
+import { estimateStripeFeeCents, formatCurrencyAmount } from "./money.js";
 import {
   currentTimestamp,
   formatBrisbaneDateTimeInput,
@@ -27,6 +27,7 @@ import {
 
 export interface EventAttendance {
   going: number;
+  held?: number;
 }
 
 export type EventReplyOptions = Pick<
@@ -297,7 +298,10 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
     if (typeof pending.ticket_limit === "number") {
       body += ` · ${pending.ticket_limit}-ticket capacity`;
     }
-    body += "\n";
+    body += `\n${stripeFeeEstimateLine(
+      pending.ticket_price_cents,
+      pending.ticket_currency ?? "aud",
+    )}\n`;
   } else {
     body += `🎟️ Free RSVP event${
       typeof pending.ticket_limit === "number"
@@ -370,14 +374,20 @@ export function buildEditRefundConfirm(
   pending: PendingEventCreateRecord,
   refundTotalCents: number,
   refundCount: number,
+  feeEstimateCents = 0,
 ): EventReplyOptions {
-  const total = formatCurrencyAmount(refundTotalCents, pending.ticket_currency ?? "aud");
+  const currency = pending.ticket_currency ?? "aud";
+  const total = formatCurrencyAmount(refundTotalCents, currency);
+  const feeNote =
+    feeEstimateCents > 0
+      ? `-# Stripe does not return the original processing fees when refunding ` +
+        `(~${formatCurrencyAmount(feeEstimateCents, currency)} already paid on these tickets).`
+      : "-# Stripe does not return the original processing fees when refunding.";
   return {
     content:
       `⚠️ **Price drop refunds** — saving will refund a total of **${total}** ` +
       `across **${refundCount}** already-sold ticket${refundCount === 1 ? "" : "s"}. ` +
-      "Ticket holders keep their tickets and are notified by DM.\n" +
-      "-# Stripe does not return the original processing fees when refunding.",
+      `Ticket holders keep their tickets and are notified by DM.\n${feeNote}`,
     embeds: [],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -392,6 +402,16 @@ export function buildEditRefundConfirm(
       ),
     ],
   };
+}
+
+// Admin-only fee guidance shown on the draft panel and preview; never on
+// the public announcement.
+export function stripeFeeEstimateLine(priceCents: number, currency: string): string {
+  const fee = estimateStripeFeeCents(priceCents);
+  return (
+    `-# 💳 Est. Stripe fee ~${formatCurrencyAmount(fee, currency)}/ticket ` +
+    `(domestic card) · you receive ~${formatCurrencyAmount(priceCents - fee, currency)}`
+  );
 }
 
 export function buildEventPreview(event: EventRecord): InteractionEditReplyOptions {
@@ -413,10 +433,15 @@ export function buildEventPreview(event: EventRecord): InteractionEditReplyOptio
     files.push(new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }));
   }
 
+  const feeLine =
+    event.ticket_price_cents && event.ticket_currency
+      ? `\n${stripeFeeEstimateLine(event.ticket_price_cents, event.ticket_currency)}`
+      : "";
+
   return {
     content:
       `**Preview** — this will be posted in ` +
-      `<#${event.announcement_channel_id}>.\n\n` +
+      `<#${event.announcement_channel_id}>.${feeLine}\n\n` +
       buildEventAnnouncementText(event),
     embeds: [],
     components: [
@@ -618,7 +643,7 @@ export function buildTicketCheckout(
   return {
     content: withTestNote(
       event,
-      `A ticket for **${event.title}** is reserved for about 30 minutes.\n\n` +
+      `A ticket for **${event.title}** is reserved for about 10 minutes.\n\n` +
         `Price: ${price}\n` +
         (event.test_mode
           ? "Use a Stripe test card such as 4242 4242 4242 4242."
@@ -692,7 +717,11 @@ export function buildEventAnnouncementText(
 
   if (attendance) {
     const paid = Boolean(event.ticket_price_cents && event.ticket_currency);
-    let line = paid ? `🎟️ ${attendance.going} sold` : `🙋 ${attendance.going} going`;
+    const held = attendance.held ?? 0;
+    let line = paid
+      ? `🎟️ ${attendance.going - held} sold`
+      : `🙋 ${attendance.going} going`;
+    if (held > 0) line += ` · ${held} on hold`;
     if (typeof event.ticket_limit === "number") {
       const left = Math.max(0, event.ticket_limit - attendance.going);
       line += left === 0 ? " · none left" : ` · ${left} left`;
