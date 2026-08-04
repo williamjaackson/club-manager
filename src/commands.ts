@@ -24,6 +24,11 @@ export const commandDefinitions = [
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
   new ContextMenuCommandBuilder()
+    .setName("Edit Event")
+    .setType(ApplicationCommandType.Message)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
+  new ContextMenuCommandBuilder()
     .setName("Close Event")
     .setType(ApplicationCommandType.Message)
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

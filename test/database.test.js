@@ -679,3 +679,107 @@ test("queues a refund notification when a ticket is revoked", async () => {
     await context.close();
   }
 });
+
+test("applies published-event edits and plans price-drop refunds", async () => {
+  const context = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+    ticketLimit: 10,
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+    const attached = await context.store.attachTicketCheckout(
+      reservation.order.id,
+      reservation.order.attempt,
+      "cs_edit_test",
+      "https://checkout.stripe.com/test",
+      302,
+    );
+    await context.store.fulfillTicketOrder(
+      attached.id,
+      "cs_edit_test",
+      { paymentIntentId: "pi_edit_test", amountTotal: 1250, currency: "aud" },
+      400,
+    );
+
+    const pendingBase = {
+      token: "e".repeat(32),
+      user_id: "32345678901234567",
+      guild_id: context.event.guild_id,
+      edit_event_id: context.event.id,
+      announcement_channel_id: context.event.announcement_channel_id,
+      title: "Edited event",
+      location: "New location",
+      location_url: "https://maps.app.goo.gl/new",
+      announcement: "Updated announcement.",
+      artwork_url: null,
+      artwork_name: null,
+      starts_at: 5_000,
+      ends_at: 9_000,
+      ticket_sales_close_at: 8_000,
+      ticket_price_cents: 1000,
+      ticket_currency: "aud",
+      ticket_limit: 5,
+      test_mode: false,
+    };
+
+    const preview = await context.store.previewPriceDropRefunds(context.event.id, 1000);
+    assert.deepEqual(preview, { count: 1, totalCents: 250 });
+
+    await assert.rejects(
+      context.store.applyEventEdit({ ...pendingBase, ticket_price_cents: null }),
+      /cannot switch between free RSVPs and paid tickets/,
+    );
+    await assert.rejects(
+      context.store.applyEventEdit({ ...pendingBase, ticket_limit: 0 }),
+      /Capacity cannot be below/,
+    );
+    await assert.rejects(
+      context.store.applyEventEdit({ ...pendingBase, test_mode: true }),
+      /test mode cannot change/i,
+    );
+
+    const { event, refunds } = await context.store.applyEventEdit(pendingBase, 450);
+    assert.equal(event.title, "Edited event");
+    assert.equal(event.ticket_price_cents, 1000);
+    assert.equal(event.location_url, "https://maps.app.goo.gl/new");
+    assert.equal(event.edited_at, 450);
+    assert.deepEqual(refunds, [
+      {
+        orderId: attached.id,
+        userId: "52345678901234567",
+        paymentIntentId: "pi_edit_test",
+        amountCents: 250,
+        newAmountTotal: 1000,
+      },
+    ]);
+
+    await context.store.finalizePriceAdjustment(
+      attached.id,
+      1000,
+      "A$2.50 is being refunded to your card.",
+      500,
+    );
+    const order = await context.store.getTicketOrder(attached.id);
+    assert.equal(order?.amount_total, 1000);
+    const audits = await context.store.getPendingAudit(600);
+    const adjusted = audits.find(({ action }) => action === "ticket_price_adjusted");
+    assert.equal(adjusted?.detail, "A$2.50 is being refunded to your card.");
+    assert.deepEqual(
+      await context.store.previewPriceDropRefunds(context.event.id, 1000),
+      {
+        count: 0,
+        totalCents: 0,
+      },
+    );
+  } finally {
+    await context.close();
+  }
+});

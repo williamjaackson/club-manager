@@ -35,12 +35,13 @@ import {
   TicketSalesClosedError,
 } from "./database.js";
 import {
+  buildAdmissionComponents,
   buildCancellationComplete,
-  buildClosedAdmissionComponents,
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
   buildCurrentRsvp,
+  buildEditRefundConfirm,
   buildEventAnnouncementText,
   buildEventPreview,
   buildPublicEventMessage,
@@ -139,6 +140,10 @@ export class EventController {
   async handleContextMenu(
     interaction: MessageContextMenuCommandInteraction,
   ): Promise<boolean> {
+    if (interaction.commandName === "Edit Event") {
+      await this.#startEventEdit(interaction);
+      return true;
+    }
     if (interaction.commandName !== "Close Event") return false;
 
     this.#requireAdministrator(interaction);
@@ -159,7 +164,7 @@ export class EventController {
     const closedEvent = await this.#store.getEvent(event.id);
     if (!closedEvent) throw new Error("That event no longer exists.");
 
-    const failedUpdates = await this.#refreshClosedAdmissionMessages(
+    const failedUpdates = await this.#refreshEventMessages(
       interaction,
       closedEvent,
     ).catch((error) => {
@@ -179,8 +184,8 @@ export class EventController {
     return true;
   }
 
-  async #refreshClosedAdmissionMessages(
-    interaction: MessageContextMenuCommandInteraction,
+  async #refreshEventMessages(
+    interaction: MessageContextMenuCommandInteraction | ButtonInteraction,
     event: EventRecord,
   ): Promise<number> {
     const channel = await interaction.client.channels.fetch(
@@ -193,7 +198,7 @@ export class EventController {
       return 1;
     }
 
-    const components = buildClosedAdmissionComponents(event);
+    const components = buildAdmissionComponents(event);
     const updates: Promise<unknown>[] = [];
     if (event.message_id) {
       updates.push(
@@ -285,6 +290,57 @@ export class EventController {
     await interaction.editReply({ content: describeSettings(saved), components: [] });
   }
 
+  async #startEventEdit(
+    interaction: MessageContextMenuCommandInteraction,
+  ): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Events can only be edited inside a server.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const event = await this.#store.getEventByAdmissionMessageId(
+      interaction.guildId,
+      interaction.targetMessage.id,
+    );
+    if (event?.status !== "published" || !event.message_id) {
+      throw new Error("Use Edit Event on an event announcement or reminder.");
+    }
+
+    const token = randomBytes(16).toString("hex");
+    const seed: NewPendingEventCreate = {
+      token,
+      userId: interaction.user.id,
+      guildId: interaction.guildId,
+      editEventId: event.id,
+      announcementChannelId: event.announcement_channel_id,
+      title: event.title,
+      location: event.location,
+      announcement: event.announcement,
+      testMode: event.test_mode,
+    };
+    if (event.location_url) seed.locationUrl = event.location_url;
+    if (event.artwork_url) seed.artworkUrl = event.artwork_url;
+    if (event.artwork_name) seed.artworkName = event.artwork_name;
+    if (typeof event.starts_at === "number") seed.startsAt = event.starts_at;
+    if (typeof event.ends_at === "number") seed.endsAt = event.ends_at;
+    if (typeof event.ticket_sales_close_at === "number") {
+      seed.ticketSalesCloseAt = event.ticket_sales_close_at;
+    }
+    if (typeof event.ticket_price_cents === "number") {
+      seed.ticketPriceCents = event.ticket_price_cents;
+      seed.ticketCurrency = event.ticket_currency ?? "aud";
+    }
+    if (typeof event.ticket_limit === "number") seed.ticketLimit = event.ticket_limit;
+
+    await this.#store.createPendingEventCreate(seed);
+    const pending = await this.#store.getPendingEventCreate(token);
+    if (!pending) {
+      throw new Error("The edit form could not be created. Try again.");
+    }
+    await interaction.editReply(buildWizardHub(pending));
+  }
+
   // Wizard modals opened from the hub edit the hub message in place; the
   // very first details modal (opened by /event create) creates it.
   async #deferWizardModal(interaction: ModalSubmitInteraction): Promise<void> {
@@ -351,6 +407,16 @@ export class EventController {
     interaction: ModalSubmitInteraction,
     token: string,
   ): Promise<void> {
+    const existing = await this.#pendingEventWizard(interaction, token);
+    if (!existing) {
+      await interaction.reply({
+        content: "This event form expired. Run `/event create` again.",
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+    const isEdit = typeof existing.edit_event_id === "number";
+
     const startsAt = parseBrisbaneDateTime(
       interaction.fields.getTextInputValue(eventIds.startsAt),
       "Start time",
@@ -367,16 +433,22 @@ export class EventController {
       interaction.fields.getTextInputValue(eventIds.locationUrl),
       "Google Maps link",
     );
-    if (startsAt <= currentTimestamp()) {
+    // Edits may describe an event that is already underway; only new events
+    // must be scheduled in the future.
+    if (!isEdit && startsAt <= currentTimestamp()) {
       throw new Error("Start time must be in the future.");
     }
     if (endsAt !== undefined && endsAt <= startsAt) {
       throw new Error("Finish time must be after the start time.");
     }
-    if (endsAt !== undefined && endsAt <= currentTimestamp()) {
+    if (!isEdit && endsAt !== undefined && endsAt <= currentTimestamp()) {
       throw new Error("Finish time must be in the future.");
     }
-    if (ticketSalesCloseAt !== undefined && ticketSalesCloseAt <= currentTimestamp()) {
+    if (
+      !isEdit &&
+      ticketSalesCloseAt !== undefined &&
+      ticketSalesCloseAt <= currentTimestamp()
+    ) {
       throw new Error("Ticket sales close must be in the future.");
     }
     if (
@@ -441,7 +513,11 @@ export class EventController {
     await this.#renderWizardHub(interaction, token);
   }
 
-  async #finishEventWizard(interaction: ButtonInteraction, token: string): Promise<void> {
+  async #finishEventWizard(
+    interaction: ButtonInteraction,
+    token: string,
+    editConfirmed = false,
+  ): Promise<void> {
     await interaction.deferUpdate();
     const pending = await this.#pendingEventWizard(interaction, token);
     if (!pending) {
@@ -462,6 +538,11 @@ export class EventController {
     }
     if (pending.test_mode && pending.ticket_price_cents === null) {
       throw new Error("Stripe test events require a paid ticket price.");
+    }
+
+    if (typeof pending.edit_event_id === "number") {
+      await this.#applyEventEdit(interaction, pending, editConfirmed);
+      return;
     }
 
     const consumed = await this.#store.consumePendingEventCreate(
@@ -500,6 +581,66 @@ export class EventController {
 
     const event = await this.#store.createEventDraft(draft);
     await interaction.editReply(buildEventPreview(event));
+  }
+
+  async #applyEventEdit(
+    interaction: ButtonInteraction,
+    pending: PendingEventCreateRecord,
+    editConfirmed: boolean,
+  ): Promise<void> {
+    if (
+      typeof pending.edit_event_id === "number" &&
+      typeof pending.ticket_price_cents === "number" &&
+      !editConfirmed
+    ) {
+      const preview = await this.#store.previewPriceDropRefunds(
+        pending.edit_event_id,
+        pending.ticket_price_cents,
+      );
+      if (preview.count > 0) {
+        await interaction.editReply(
+          buildEditRefundConfirm(pending, preview.totalCents, preview.count),
+        );
+        return;
+      }
+    }
+
+    const { event, refunds } = await this.#store.applyEventEdit(pending);
+    await this.#store.deletePendingEventCreate(pending.token);
+
+    let refundSummary = "";
+    if (refunds.length > 0) {
+      const { refunded, failed } = await this.#ticketing.refundPriceDifferences(
+        event,
+        refunds,
+      );
+      void this.#audit.flush();
+      refundSummary = ` Refunded the price difference on ${refunded} ticket${
+        refunded === 1 ? "" : "s"
+      }.`;
+      if (failed > 0) {
+        refundSummary += ` ⚠️ ${failed} refund${
+          failed === 1 ? "" : "s"
+        } failed — save the edit again to retry, or handle them in the Stripe dashboard.`;
+      }
+    }
+
+    const failedUpdates = await this.#refreshEventMessages(interaction, event).catch(
+      (error) => {
+        console.error("Failed to refresh edited event messages", error);
+        return 1;
+      },
+    );
+    await interaction.editReply({
+      content:
+        `✅ Updated **${event.title}**. The announcement has been refreshed.` +
+        refundSummary +
+        (failedUpdates > 0
+          ? " Some existing messages could not be updated visually."
+          : ""),
+      embeds: [],
+      components: [],
+    });
   }
 
   async #abortEventWizard(interaction: ButtonInteraction, token: string): Promise<void> {
@@ -591,6 +732,15 @@ export class EventController {
 
       if (wizard.action === "finish") {
         await this.#finishEventWizard(interaction, wizard.token);
+        return true;
+      }
+      if (wizard.action === "confirm-apply") {
+        await this.#finishEventWizard(interaction, wizard.token, true);
+        return true;
+      }
+      if (wizard.action === "back") {
+        await interaction.deferUpdate();
+        await this.#renderWizardHub(interaction, wizard.token);
         return true;
       }
       if (wizard.action === "abort") {
@@ -1017,13 +1167,15 @@ type WizardButtonAction =
   | "edit-schedule"
   | "edit-admission"
   | "finish"
+  | "confirm-apply"
+  | "back"
   | "abort";
 
 function parseEventWizardAction(
   customId: string,
 ): { action: WizardButtonAction; token: string } | undefined {
   const match =
-    /^event:create:(edit-details|edit-schedule|edit-admission|finish|abort):([a-f0-9]{32})$/.exec(
+    /^event:create:(edit-details|edit-schedule|edit-admission|finish|confirm-apply|back|abort):([a-f0-9]{32})$/.exec(
       customId,
     );
   if (!match?.[1] || !match[2]) return undefined;

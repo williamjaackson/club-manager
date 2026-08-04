@@ -1,6 +1,6 @@
 import { neonConfig, Pool, type PoolClient } from "@neondatabase/serverless";
 import ws from "ws";
-import { currentTimestamp } from "./time.js";
+import { currentTimestamp, formatScheduleText } from "./time.js";
 
 neonConfig.webSocketConstructor = ws;
 
@@ -12,7 +12,8 @@ export type AuditAction =
   | "rsvp"
   | "cancel"
   | "ticket_paid"
-  | "ticket_refunded";
+  | "ticket_refunded"
+  | "ticket_price_adjusted";
 export type InterestKind = "rsvp" | "ticket";
 export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
@@ -39,6 +40,7 @@ export interface EventRecord {
   status: EventStatus;
   created_at: number;
   published_at: number | null;
+  edited_at: number | null;
 }
 
 export interface NewEventDraft {
@@ -81,12 +83,15 @@ export interface PendingEventCreateRecord {
   ticket_sales_close_at: number | null;
   created_at: number;
   expires_at: number;
+  edit_event_id: number | null;
 }
 
 export interface NewPendingEventCreate {
   token: string;
   userId: string;
   guildId: string;
+  editEventId?: number;
+  locationUrl?: string;
   announcementChannelId?: string;
   title?: string;
   location?: string;
@@ -169,6 +174,14 @@ export interface AuditOutboxRecord {
 export interface RsvpChange {
   changed: boolean;
   status: RsvpStatus;
+}
+
+export interface PriceDropRefund {
+  orderId: number;
+  userId: string;
+  paymentIntentId: string | null;
+  amountCents: number;
+  newAmountTotal: number;
 }
 
 export interface GuildSettingsRecord {
@@ -284,7 +297,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         status TEXT NOT NULL DEFAULT 'draft'
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at DOUBLE PRECISION NOT NULL,
-        published_at DOUBLE PRECISION
+        published_at DOUBLE PRECISION,
+        edited_at DOUBLE PRECISION
       );
 
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
@@ -295,6 +309,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ends_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS location_url TEXT;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS edited_at DOUBLE PRECISION;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -315,7 +330,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ends_at DOUBLE PRECISION,
         ticket_sales_close_at DOUBLE PRECISION,
         created_at DOUBLE PRECISION NOT NULL,
-        expires_at DOUBLE PRECISION NOT NULL
+        expires_at DOUBLE PRECISION NOT NULL,
+        edit_event_id INTEGER
       );
 
       ALTER TABLE pending_event_creates
@@ -336,6 +352,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
       ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS location_url TEXT;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS edit_event_id INTEGER;
 
       CREATE TABLE IF NOT EXISTS ticket_orders (
         id SERIAL PRIMARY KEY,
@@ -412,7 +430,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         action TEXT NOT NULL CONSTRAINT audit_outbox_action_check
           CHECK (action IN (
             'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-            'ticket_paid', 'ticket_refunded'
+            'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted'
           )),
         created_at DOUBLE PRECISION NOT NULL,
         next_attempt_at DOUBLE PRECISION NOT NULL,
@@ -427,7 +445,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE audit_outbox ADD CONSTRAINT audit_outbox_action_check
         CHECK (action IN (
           'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-          'ticket_paid', 'ticket_refunded'
+          'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted'
         ));
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
@@ -713,10 +731,12 @@ export class Store {
           ends_at,
           ticket_sales_close_at,
           created_at,
-          expires_at
+          expires_at,
+          edit_event_id,
+          location_url
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15, $16, $17, $18
+          $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
         )
       `,
       [
@@ -738,6 +758,8 @@ export class Store {
         pending.ticketSalesCloseAt ?? null,
         now,
         now + lifetimeSeconds,
+        pending.editEventId ?? null,
+        pending.locationUrl ?? null,
       ],
     );
   }
@@ -1476,6 +1498,215 @@ export class Store {
       `,
       [attempts, now + delay, error.slice(0, 1000), id],
     );
+  }
+
+  // Applies a completed edit form to its published event. Validates the
+  // immutable properties, enforces the capacity floor, and returns the
+  // partial refunds owed after a price drop (already-paid orders keep their
+  // ticket; the difference is refunded by the caller through Stripe).
+  async applyEventEdit(
+    pending: PendingEventCreateRecord,
+    now = currentTimestamp(),
+  ): Promise<{ event: EventRecord; refunds: PriceDropRefund[] }> {
+    if (!pending.edit_event_id) {
+      throw new Error("This form is not an edit session.");
+    }
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const event = await this.#getEvent(client, pending.edit_event_id, true);
+      if (event?.status !== "published") {
+        throw new EventUnavailableError();
+      }
+
+      const wasPaid = event.ticket_price_cents !== null;
+      const isPaid = pending.ticket_price_cents !== null;
+      if (wasPaid !== isPaid) {
+        throw new Error(
+          "Events cannot switch between free RSVPs and paid tickets after publishing.",
+        );
+      }
+      if (pending.test_mode !== event.test_mode) {
+        throw new Error("Stripe test mode cannot change after publishing.");
+      }
+      if (
+        pending.announcement_channel_id &&
+        pending.announcement_channel_id !== event.announcement_channel_id
+      ) {
+        throw new Error("The announcement channel cannot change after publishing.");
+      }
+
+      if (pending.ticket_limit !== null) {
+        const admitted = isPaid
+          ? await client.query(
+              `
+                SELECT COUNT(*)::integer AS count
+                FROM ticket_orders
+                WHERE
+                  event_id = $1
+                  AND (
+                    status = 'paid'
+                    OR (status = 'pending' AND reservation_expires_at > $2)
+                  )
+              `,
+              [event.id, now],
+            )
+          : await client.query(
+              `
+                SELECT COUNT(*)::integer AS count
+                FROM rsvps
+                WHERE event_id = $1 AND status = 'active'
+              `,
+              [event.id],
+            );
+        const count = Number((admitted.rows[0] as { count: number }).count);
+        if (pending.ticket_limit < count) {
+          throw new Error(
+            `Capacity cannot be below the ${count} member(s) already admitted.`,
+          );
+        }
+      }
+
+      const updated = await client.query(
+        `
+          UPDATE events
+          SET
+            title = $1,
+            location = $2,
+            location_url = $3,
+            announcement = $4,
+            artwork_url = $5,
+            artwork_name = $6,
+            schedule_text = $7,
+            starts_at = $8,
+            ends_at = $9,
+            ticket_sales_close_at = $10,
+            ticket_price_cents = $11,
+            ticket_limit = $12,
+            edited_at = $13
+          WHERE id = $14
+          RETURNING *
+        `,
+        [
+          pending.title,
+          pending.location,
+          pending.location_url,
+          pending.announcement,
+          pending.artwork_url,
+          pending.artwork_name,
+          pending.starts_at === null
+            ? event.schedule_text
+            : formatScheduleText(pending.starts_at, pending.ends_at ?? undefined),
+          pending.starts_at,
+          pending.ends_at,
+          pending.ticket_sales_close_at,
+          pending.ticket_price_cents,
+          pending.ticket_limit,
+          now,
+          event.id,
+        ],
+      );
+
+      let refunds: PriceDropRefund[] = [];
+      if (isPaid && pending.ticket_price_cents !== null) {
+        const newPrice = pending.ticket_price_cents;
+        const owed = await client.query(
+          `
+            SELECT id, user_id, stripe_payment_intent_id, amount_total
+            FROM ticket_orders
+            WHERE event_id = $1 AND status = 'paid' AND amount_total > $2
+            ORDER BY id
+          `,
+          [event.id, newPrice],
+        );
+        refunds = (
+          owed.rows as {
+            id: number;
+            user_id: string;
+            stripe_payment_intent_id: string | null;
+            amount_total: number;
+          }[]
+        ).map((row) => ({
+          orderId: row.id,
+          userId: row.user_id,
+          paymentIntentId: row.stripe_payment_intent_id,
+          amountCents: row.amount_total - newPrice,
+          newAmountTotal: newPrice,
+        }));
+      }
+
+      await client.query("COMMIT");
+      return { event: updated.rows[0] as EventRecord, refunds };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async previewPriceDropRefunds(
+    eventId: number,
+    newPriceCents: number,
+  ): Promise<{ count: number; totalCents: number }> {
+    const result = await this.#pool.query(
+      `
+        SELECT amount_total
+        FROM ticket_orders
+        WHERE event_id = $1 AND status = 'paid' AND amount_total > $2
+      `,
+      [eventId, newPriceCents],
+    );
+    const rows = result.rows as { amount_total: number }[];
+    return {
+      count: rows.length,
+      totalCents: rows.reduce(
+        (total, row) => total + (Number(row.amount_total) - newPriceCents),
+        0,
+      ),
+    };
+  }
+
+  // Marks a partial price-difference refund as settled and queues the
+  // member's notification. Only called after Stripe accepted the refund.
+  async finalizePriceAdjustment(
+    orderId: number,
+    newAmountTotal: number,
+    detail: string,
+    now = currentTimestamp(),
+  ): Promise<void> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `
+          UPDATE ticket_orders
+          SET amount_total = $1, updated_at = $2
+          WHERE id = $3
+          RETURNING event_id, user_id
+        `,
+        [newAmountTotal, now, orderId],
+      );
+      const order = result.rows[0] as { event_id: number; user_id: string } | undefined;
+      if (order) {
+        await client.query(
+          `
+            INSERT INTO audit_outbox (
+              event_id, user_id, action, detail, created_at, next_attempt_at
+            ) VALUES ($1, $2, 'ticket_price_adjusted', $3, $4, $5)
+          `,
+          [order.event_id, order.user_id, detail, now, now],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getGuildSettings(guildId: string): Promise<GuildSettingsRecord | undefined> {
