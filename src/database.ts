@@ -162,6 +162,22 @@ export interface RsvpChange {
   status: RsvpStatus;
 }
 
+export interface GuildSettingsRecord {
+  guild_id: string;
+  rsvp_log_channel_id: string | null;
+  verification_message_url: string | null;
+  connected_role_id: string | null;
+  exempt_role_id: string | null;
+  updated_at: number;
+}
+
+export interface GuildSettingsUpdate {
+  rsvpLogChannelId?: string | null;
+  verificationMessageUrl?: string | null;
+  connectedRoleId?: string | null;
+  exemptRoleId?: string | null;
+}
+
 export class EventUnavailableError extends Error {
   constructor() {
     super("This event is no longer accepting RSVP changes.");
@@ -406,6 +422,15 @@ export async function setupDatabase(pool: Pool): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
         ON audit_outbox (sent_at, next_attempt_at, id);
+
+      CREATE TABLE IF NOT EXISTS guild_settings (
+        guild_id TEXT PRIMARY KEY,
+        rsvp_log_channel_id TEXT,
+        verification_message_url TEXT,
+        connected_role_id TEXT,
+        exempt_role_id TEXT,
+        updated_at DOUBLE PRECISION NOT NULL
+      );
     `);
     await client.query("COMMIT");
   } catch (error) {
@@ -1381,6 +1406,49 @@ export class Store {
       `,
       [attempts, now + delay, error.slice(0, 1000), id],
     );
+  }
+
+  async getGuildSettings(guildId: string): Promise<GuildSettingsRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM guild_settings WHERE guild_id = $1",
+      [guildId],
+    );
+    return result.rows[0] as GuildSettingsRecord | undefined;
+  }
+
+  async upsertGuildSettings(
+    guildId: string,
+    update: GuildSettingsUpdate,
+    now = currentTimestamp(),
+  ): Promise<GuildSettingsRecord> {
+    const result = await this.#pool.query(
+      `
+        INSERT INTO guild_settings (
+          guild_id,
+          rsvp_log_channel_id,
+          verification_message_url,
+          connected_role_id,
+          exempt_role_id,
+          updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (guild_id) DO UPDATE SET
+          rsvp_log_channel_id = $2,
+          verification_message_url = $3,
+          connected_role_id = $4,
+          exempt_role_id = $5,
+          updated_at = $6
+        RETURNING *
+      `,
+      [
+        guildId,
+        update.rsvpLogChannelId ?? null,
+        update.verificationMessageUrl ?? null,
+        update.connectedRoleId ?? null,
+        update.exemptRoleId ?? null,
+        now,
+      ],
+    );
+    return result.rows[0] as GuildSettingsRecord;
   }
 
   async countRsvpHistory(eventId: number): Promise<number> {

@@ -1,18 +1,19 @@
 import { type Client, escapeMarkdown } from "discord.js";
 import type { AuditOutboxRecord, Store } from "./database.js";
 import { testModeNote } from "./event-ui.js";
+import type { SettingsResolver } from "./settings.js";
 
 export class AuditLogger {
   readonly #client: Client;
   readonly #store: Store;
-  readonly #channelId: string;
+  readonly #settings: SettingsResolver;
   #timer: NodeJS.Timeout | undefined;
   #running: Promise<void> | undefined;
 
-  constructor(client: Client, store: Store, channelId: string) {
+  constructor(client: Client, store: Store, settings: SettingsResolver) {
     this.#client = client;
     this.#store = store;
-    this.#channelId = channelId;
+    this.#settings = settings;
   }
 
   start(): void {
@@ -61,11 +62,16 @@ export class AuditLogger {
   }
 
   async #send(record: AuditOutboxRecord): Promise<void> {
-    const channel = await this.#client.channels.fetch(this.#channelId);
+    const { rsvpLogChannelId } = await this.#settings.resolve(record.guild_id);
+    if (!rsvpLogChannelId) {
+      throw new Error(`Guild ${record.guild_id} has no RSVP log channel; run /config`);
+    }
+
+    const channel = await this.#client.channels.fetch(rsvpLogChannelId);
 
     if (!channel?.isSendable()) {
       throw new Error(
-        `RSVP log channel ${this.#channelId} is unavailable or not sendable`,
+        `RSVP log channel ${rsvpLogChannelId} is unavailable or not sendable`,
       );
     }
 

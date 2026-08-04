@@ -115,15 +115,23 @@ cp .env.example .env
 ```dotenv
 DISCORD_TOKEN=replace-me
 DISCORD_GUILD_ID=replace-me
-RSVP_LOG_CHANNEL_ID=1530755171645132921
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 PUBLIC_BASE_URL=https://club.example.com
 STRIPE_SECRET_KEY=sk_test_replace-me
 STRIPE_WEBHOOK_SECRET=whsec_replace-me
 STRIPE_TEST_SECRET_KEY=sk_test_replace-me
 STRIPE_TEST_WEBHOOK_SECRET=whsec_replace-me
-HEALTH_PORT=3000
+HTTP_PORT=3000
 ```
+
+Per-guild settings — the RSVP log channel, verification roles, and the
+verification message link — are configured in Discord with the
+administrator-only `/config` command, which opens a pre-filled form and
+stores the values in the database. The environment variables
+`RSVP_LOG_CHANNEL_ID`, `VERIFICATION_MESSAGE_URL`,
+`STUDENT_CONNECTION_ROLE_ID`, and `STUDENT_NUMBER_EXEMPT_ROLE_ID` still act
+as fallbacks for guilds that have never run `/config`. When no verification
+roles are configured at all, events accept responses from every member.
 
 Never commit `.env`. Reset the token in the
 [Discord Developer Portal](https://discord.com/developers/applications) if it

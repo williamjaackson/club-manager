@@ -596,3 +596,39 @@ test("parks audit records after repeated delivery failures", async () => {
     await context.close();
   }
 });
+
+test("stores and clears per-guild settings", async () => {
+  const context = await fixture();
+
+  try {
+    const guildId = "12345678901234567";
+    assert.equal(await context.store.getGuildSettings(guildId), undefined);
+
+    await context.store.upsertGuildSettings(
+      guildId,
+      {
+        rsvpLogChannelId: "52345678901234567",
+        connectedRoleId: "62345678901234567",
+        exemptRoleId: "72345678901234567",
+        verificationMessageUrl: "https://discord.com/channels/1/2/3",
+      },
+      500,
+    );
+    const saved = await context.store.getGuildSettings(guildId);
+    assert.equal(saved?.rsvp_log_channel_id, "52345678901234567");
+    assert.equal(saved?.connected_role_id, "62345678901234567");
+    assert.equal(saved?.updated_at, 500);
+
+    await context.store.upsertGuildSettings(
+      guildId,
+      { rsvpLogChannelId: "52345678901234567" },
+      600,
+    );
+    const cleared = await context.store.getGuildSettings(guildId);
+    assert.equal(cleared?.rsvp_log_channel_id, "52345678901234567");
+    assert.equal(cleared?.connected_role_id, null);
+    assert.equal(cleared?.verification_message_url, null);
+  } finally {
+    await context.close();
+  }
+});

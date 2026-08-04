@@ -556,6 +556,19 @@ test("requires a connected or exempt role before showing the RSVP confirmation",
     },
     { async flush() {} },
     {},
+    {
+      async resolve() {
+        return {
+          connectedRoleId: "1257896371973914674",
+          exemptRoleId: "1343246871723901071",
+          verificationMessageUrl:
+            "https://discord.com/channels/1214387742293626940/1257896790934421535/1348722902375071785",
+        };
+      },
+      async update() {
+        return {};
+      },
+    },
   );
 
   await controller.handleButton({
@@ -604,6 +617,20 @@ test("checks RSVP eligibility again when confirming", async () => {
       },
     },
     {},
+    {},
+    {
+      async resolve() {
+        return {
+          connectedRoleId: "1257896371973914674",
+          exemptRoleId: "1343246871723901071",
+          verificationMessageUrl:
+            "https://discord.com/channels/1214387742293626940/1257896790934421535/1348722902375071785",
+        };
+      },
+      async update() {
+        return {};
+      },
+    },
   );
 
   await controller.handleButton({

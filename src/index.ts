@@ -18,6 +18,7 @@ import {
 } from "./database.js";
 import { EventController } from "./event-controller.js";
 import { startHttpServer } from "./http.js";
+import { GuildSettingsService } from "./settings.js";
 import { TicketingService } from "./ticketing.js";
 
 await initializeDatabase(config.databaseUrl);
@@ -26,7 +27,15 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds],
 });
 const store = new Store(databasePool);
-const audit = new AuditLogger(client, store, config.rsvpLogChannelId);
+const settings = new GuildSettingsService(store, {
+  ...(config.rsvpLogChannelId ? { rsvpLogChannelId: config.rsvpLogChannelId } : {}),
+  ...(config.verificationMessageUrl
+    ? { verificationMessageUrl: config.verificationMessageUrl }
+    : {}),
+  ...(config.connectedRoleId ? { connectedRoleId: config.connectedRoleId } : {}),
+  ...(config.exemptRoleId ? { exemptRoleId: config.exemptRoleId } : {}),
+});
+const audit = new AuditLogger(client, store, settings);
 const stripe = new Stripe(config.stripeSecretKey);
 const stripeTestMode =
   config.stripeTestSecretKey && config.stripeTestWebhookSecret
@@ -42,7 +51,7 @@ const ticketing = new TicketingService(
   config.stripeWebhookSecret,
   stripeTestMode,
 );
-const eventController = new EventController(store, audit, ticketing);
+const eventController = new EventController(store, audit, ticketing, settings);
 const httpServer = startHttpServer(client, ticketing, config.httpPort, () => {
   void audit.flush();
 });
@@ -76,16 +85,21 @@ client.once(Events.ClientReady, async (readyClient) => {
     console.error("Failed to register application commands", error);
   }
 
-  try {
-    const channel = await readyClient.channels.fetch(config.rsvpLogChannelId);
-
-    if (!channel?.isSendable()) {
-      throw new Error("channel is not sendable");
+  if (config.guildId) {
+    try {
+      const { rsvpLogChannelId } = await settings.resolve(config.guildId);
+      if (!rsvpLogChannelId) {
+        console.warn("No RSVP log channel configured; run /config in Discord.");
+      } else {
+        const channel = await readyClient.channels.fetch(rsvpLogChannelId);
+        if (!channel?.isSendable()) {
+          throw new Error("channel is not sendable");
+        }
+        console.log(`RSVP audit channel ready: ${rsvpLogChannelId}`);
+      }
+    } catch (error) {
+      console.error("RSVP audit channel is unavailable", error);
     }
-
-    console.log(`RSVP audit channel ready: ${config.rsvpLogChannelId}`);
-  } catch (error) {
-    console.error(`RSVP audit channel ${config.rsvpLogChannelId} is unavailable`, error);
   }
 
   audit.start();

@@ -38,7 +38,11 @@ test("logs ticket interest to the audit channel", async () => {
         markedId = id;
       },
     },
-    "42345678901234567",
+    {
+      async resolve() {
+        return { rsvpLogChannelId: "42345678901234567" };
+      },
+    },
   );
 
   await logger.flush();
@@ -100,7 +104,11 @@ test("posts ticket purchases and DMs the buyer", async () => {
         markedId = id;
       },
     },
-    "42345678901234567",
+    {
+      async resolve() {
+        return { rsvpLogChannelId: "42345678901234567" };
+      },
+    },
   );
 
   await logger.flush();
@@ -144,7 +152,11 @@ test("marks the audit sent even when the confirmation DM fails", async () => {
         markedId = id;
       },
     },
-    "42345678901234567",
+    {
+      async resolve() {
+        return { rsvpLogChannelId: "42345678901234567" };
+      },
+    },
   );
 
   await logger.flush();
@@ -167,7 +179,11 @@ test("flush never rejects even when the store fails", async () => {
         throw new Error("database is down");
       },
     },
-    "42345678901234567",
+    {
+      async resolve() {
+        return { rsvpLogChannelId: "42345678901234567" };
+      },
+    },
   );
 
   await assert.doesNotReject(logger.flush());
