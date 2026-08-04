@@ -34,6 +34,8 @@ const pendingOrder = {
   checkout_session_id: null,
   checkout_url: null,
   stripe_payment_intent_id: null,
+  stripe_charge_id: null,
+  stripe_refund_id: null,
   customer_email: null,
   customer_name: null,
   amount_total: null,
@@ -43,6 +45,7 @@ const pendingOrder = {
   checkout_expires_at: Math.floor(Date.now() / 1000) + 1900,
   reservation_expires_at: Math.floor(Date.now() / 1000) + 2200,
   paid_at: null,
+  refunded_at: null,
 };
 
 test("creates an idempotent Stripe Checkout Session for a ticket reservation", async () => {
@@ -210,4 +213,100 @@ test("rejects a webhook whose Stripe signature is invalid", async () => {
     service.handleWebhook(Buffer.from("bad"), "bad-signature"),
     InvalidStripeWebhookError,
   );
+});
+
+test("revokes a ticket after a charge is fully refunded", async () => {
+  const payload = Buffer.from("signed refund event");
+  let revocation;
+  const charge = {
+    id: "ch_test_ticket",
+    amount: 1250,
+    amount_refunded: 1250,
+    refunded: true,
+    payment_intent: "pi_test_ticket",
+    refunds: {
+      data: [
+        { id: "re_test_ticket", status: "succeeded" },
+      ],
+    },
+  };
+  const stripe = {
+    webhooks: {
+      constructEvent() {
+        return {
+          type: "charge.refunded",
+          data: { object: { id: charge.id } },
+        };
+      },
+    },
+    charges: {
+      async retrieve(id) {
+        assert.equal(id, charge.id);
+        return charge;
+      },
+    },
+  };
+  const store = {
+    async refundTicketOrderByPaymentIntent(paymentIntentId, details) {
+      revocation = { paymentIntentId, details };
+      return true;
+    },
+  };
+  const service = new TicketingService(
+    stripe,
+    store,
+    "https://club.example",
+    "whsec_test",
+  );
+
+  await service.handleWebhook(payload, "test-signature");
+
+  assert.deepEqual(revocation, {
+    paymentIntentId: "pi_test_ticket",
+    details: {
+      chargeId: "ch_test_ticket",
+      refundId: "re_test_ticket",
+    },
+  });
+});
+
+test("does not revoke a ticket after a partial refund", async () => {
+  let revocations = 0;
+  const charge = {
+    id: "ch_test_ticket",
+    amount: 1250,
+    amount_refunded: 500,
+    refunded: false,
+    payment_intent: "pi_test_ticket",
+    refunds: { data: [] },
+  };
+  const service = new TicketingService(
+    {
+      webhooks: {
+        constructEvent() {
+          return {
+            type: "charge.refunded",
+            data: { object: { id: charge.id } },
+          };
+        },
+      },
+      charges: {
+        async retrieve() {
+          return charge;
+        },
+      },
+    },
+    {
+      async refundTicketOrderByPaymentIntent() {
+        revocations += 1;
+        return true;
+      },
+    },
+    "https://club.example",
+    "whsec_test",
+  );
+
+  await service.handleWebhook(Buffer.from("partial"), "test-signature");
+
+  assert.equal(revocations, 0);
 });

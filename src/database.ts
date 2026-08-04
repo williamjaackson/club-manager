@@ -14,7 +14,7 @@ export type EventStatus =
   | "discarded";
 export type RsvpStatus = "active" | "cancelled";
 export type AuditAction = "rsvp" | "cancel";
-export type TicketOrderStatus = "pending" | "paid";
+export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
 export interface EventRecord {
   id: number;
@@ -84,6 +84,8 @@ export interface TicketOrderRecord {
   checkout_session_id: string | null;
   checkout_url: string | null;
   stripe_payment_intent_id: string | null;
+  stripe_charge_id: string | null;
+  stripe_refund_id: string | null;
   customer_email: string | null;
   customer_name: string | null;
   amount_total: number | null;
@@ -93,6 +95,7 @@ export interface TicketOrderRecord {
   checkout_expires_at: number;
   reservation_expires_at: number;
   paid_at: number | null;
+  refunded_at: number | null;
 }
 
 export interface TicketCheckoutReservation {
@@ -205,11 +208,14 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         id SERIAL PRIMARY KEY,
         event_id INTEGER NOT NULL REFERENCES events(id),
         user_id TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'paid')),
+        status TEXT NOT NULL CONSTRAINT ticket_orders_status_check
+          CHECK (status IN ('pending', 'paid', 'refunded')),
         attempt INTEGER NOT NULL DEFAULT 1,
         checkout_session_id TEXT UNIQUE,
         checkout_url TEXT,
         stripe_payment_intent_id TEXT,
+        stripe_charge_id TEXT,
+        stripe_refund_id TEXT,
         customer_email TEXT,
         customer_name TEXT,
         amount_total INTEGER,
@@ -219,11 +225,21 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         checkout_expires_at DOUBLE PRECISION NOT NULL,
         reservation_expires_at DOUBLE PRECISION NOT NULL,
         paid_at DOUBLE PRECISION,
+        refunded_at DOUBLE PRECISION,
         UNIQUE (event_id, user_id)
       );
 
+      ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS stripe_charge_id TEXT;
+      ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT;
+      ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS refunded_at DOUBLE PRECISION;
+      ALTER TABLE ticket_orders DROP CONSTRAINT IF EXISTS ticket_orders_status_check;
+      ALTER TABLE ticket_orders ADD CONSTRAINT ticket_orders_status_check
+        CHECK (status IN ('pending', 'paid', 'refunded'));
+
       CREATE INDEX IF NOT EXISTS ticket_orders_capacity
         ON ticket_orders (event_id, status, reservation_expires_at);
+      CREATE INDEX IF NOT EXISTS ticket_orders_payment_intent
+        ON ticket_orders (stripe_payment_intent_id);
 
       CREATE TABLE IF NOT EXISTS rsvps (
         event_id INTEGER NOT NULL REFERENCES events(id),
@@ -613,6 +629,8 @@ export class Store {
               checkout_session_id = NULL,
               checkout_url = NULL,
               stripe_payment_intent_id = NULL,
+              stripe_charge_id = NULL,
+              stripe_refund_id = NULL,
               customer_email = NULL,
               customer_name = NULL,
               amount_total = NULL,
@@ -620,7 +638,8 @@ export class Store {
               updated_at = $1,
               checkout_expires_at = $2,
               reservation_expires_at = $3,
-              paid_at = NULL
+              paid_at = NULL,
+              refunded_at = NULL
             WHERE id = $4
             RETURNING *
           `,
@@ -729,6 +748,15 @@ export class Store {
         return false;
       }
 
+      if (order.status === "refunded") {
+        if (order.checkout_session_id !== checkoutSessionId) {
+          throw new Error("Ticket order was refunded from a different Checkout Session.");
+        }
+
+        await client.query("COMMIT");
+        return false;
+      }
+
       if (
         order.checkout_session_id &&
         order.checkout_session_id !== checkoutSessionId
@@ -771,6 +799,37 @@ export class Store {
     } finally {
       client.release();
     }
+  }
+
+  async refundTicketOrderByPaymentIntent(
+    paymentIntentId: string,
+    details: {
+      chargeId: string;
+      refundId?: string;
+    },
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE ticket_orders
+        SET
+          status = 'refunded',
+          stripe_charge_id = $1,
+          stripe_refund_id = $2,
+          updated_at = $3,
+          refunded_at = $4
+        WHERE stripe_payment_intent_id = $5 AND status = 'paid'
+        RETURNING id
+      `,
+      [
+        details.chargeId,
+        details.refundId ?? null,
+        now,
+        now,
+        paymentIntentId,
+      ],
+    );
+    return result.rows.length > 0;
   }
 
   async #changeRsvp(

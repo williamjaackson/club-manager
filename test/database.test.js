@@ -140,6 +140,39 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(paid?.amount_total, 1250);
     assert.equal(paid?.customer_email, "member@example.com");
     assert.equal(
+      await context.store.refundTicketOrderByPaymentIntent(
+        "pi_test_ticket",
+        { chargeId: "ch_test_ticket", refundId: "re_test_ticket" },
+        450,
+      ),
+      true,
+    );
+    assert.equal(
+      await context.store.refundTicketOrderByPaymentIntent(
+        "pi_test_ticket",
+        { chargeId: "ch_test_ticket", refundId: "re_test_ticket" },
+        451,
+      ),
+      false,
+    );
+    const refunded = await context.store.getTicketOrderForMember(
+      context.event.id,
+      "52345678901234567",
+    );
+    assert.equal(refunded?.status, "refunded");
+    assert.equal(refunded?.stripe_charge_id, "ch_test_ticket");
+    assert.equal(refunded?.stripe_refund_id, "re_test_ticket");
+    assert.equal(refunded?.refunded_at, 450);
+    assert.equal(
+      await context.store.fulfillTicketOrder(
+        attached.id,
+        "cs_test_ticket",
+        details,
+        452,
+      ),
+      false,
+    );
+    assert.equal(
       (
         await context.store.reserveTicketCheckout(
           context.event.id,
@@ -147,7 +180,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
           500,
         )
       ).alreadyPaid,
-      true,
+      false,
     );
   } finally {
     await context.close();

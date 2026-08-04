@@ -142,6 +142,12 @@ export class TicketingService {
       );
     }
 
+    if (event.type === "charge.refunded") {
+      const charge = await this.#stripe.charges.retrieve(event.data.object.id);
+      await this.#revokeFullyRefundedCharge(charge);
+      return;
+    }
+
     if (
       event.type !== "checkout.session.completed" &&
       event.type !== "checkout.session.async_payment_succeeded"
@@ -161,11 +167,34 @@ export class TicketingService {
 
   async checkoutStatus(
     checkoutSessionId: string,
-  ): Promise<"paid" | "pending" | "unknown"> {
+  ): Promise<"paid" | "pending" | "refunded" | "unknown"> {
     const order = await this.#store.getTicketOrderByCheckoutSession(
       checkoutSessionId,
     );
     return order?.status ?? "unknown";
+  }
+
+  async #revokeFullyRefundedCharge(charge: Stripe.Charge): Promise<void> {
+    if (!charge.refunded || charge.amount_refunded < charge.amount) return;
+
+    const paymentIntentId =
+      typeof charge.payment_intent === "string"
+        ? charge.payment_intent
+        : charge.payment_intent?.id;
+    if (!paymentIntentId) return;
+
+    const successfulRefund = charge.refunds?.data.find(
+      (refund) => refund.status === "succeeded",
+    );
+    const details: Parameters<Store["refundTicketOrderByPaymentIntent"]>[1] = {
+      chargeId: charge.id,
+    };
+    if (successfulRefund) details.refundId = successfulRefund.id;
+
+    await this.#store.refundTicketOrderByPaymentIntent(
+      paymentIntentId,
+      details,
+    );
   }
 
   async #fulfillCheckout(checkout: Stripe.Checkout.Session): Promise<void> {
