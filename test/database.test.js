@@ -6,10 +6,10 @@ import {
   EventFinishedError,
   EventUnavailableError,
   RsvpCapacityReachedError,
-  setupDatabase,
   Store,
-  TicketSoldOutError,
+  setupDatabase,
   TicketSalesClosedError,
+  TicketSoldOutError,
 } from "../dist/database.js";
 
 async function fixture(eventOverrides = {}) {
@@ -46,20 +46,10 @@ test("publishes a draft exactly once", async () => {
 
   try {
     assert.equal(context.event.status, "draft");
-    assert.equal(
-      await context.store.claimEventForPublishing(context.event.id),
-      true,
-    );
-    assert.equal(
-      await context.store.claimEventForPublishing(context.event.id),
-      false,
-    );
+    assert.equal(await context.store.claimEventForPublishing(context.event.id), true);
+    assert.equal(await context.store.claimEventForPublishing(context.event.id), false);
 
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
     const published = await context.store.getEvent(context.event.id);
 
     assert.equal(published?.status, "published");
@@ -79,11 +69,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
     const reservation = await context.store.reserveTicketCheckout(
       context.event.id,
       "52345678901234567",
@@ -93,11 +79,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(reservation.alreadyPaid, false);
     assert.equal(reservation.order.status, "pending");
     await assert.rejects(
-      context.store.reserveTicketCheckout(
-        context.event.id,
-        "62345678901234567",
-        301,
-      ),
+      context.store.reserveTicketCheckout(context.event.id, "62345678901234567", 301),
       TicketSoldOutError,
     );
 
@@ -118,21 +100,11 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
       currency: "aud",
     };
     assert.equal(
-      await context.store.fulfillTicketOrder(
-        attached.id,
-        "cs_test_ticket",
-        details,
-        400,
-      ),
+      await context.store.fulfillTicketOrder(attached.id, "cs_test_ticket", details, 400),
       true,
     );
     assert.equal(
-      await context.store.fulfillTicketOrder(
-        attached.id,
-        "cs_test_ticket",
-        details,
-        401,
-      ),
+      await context.store.fulfillTicketOrder(attached.id, "cs_test_ticket", details, 401),
       false,
     );
 
@@ -196,12 +168,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(refunded?.stripe_refund_id, "re_test_ticket");
     assert.equal(refunded?.refunded_at, 450);
     assert.equal(
-      await context.store.fulfillTicketOrder(
-        attached.id,
-        "cs_test_ticket",
-        details,
-        452,
-      ),
+      await context.store.fulfillTicketOrder(attached.id, "cs_test_ticket", details, 452),
       false,
     );
     assert.equal(
@@ -228,11 +195,7 @@ test("releases abandoned ticket capacity after the webhook grace period", async 
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
     const abandoned = await context.store.reserveTicketCheckout(
       context.event.id,
       "52345678901234567",
@@ -266,32 +229,16 @@ test("rejects responses after event and ticket deadlines", async () => {
 
   try {
     await free.store.claimEventForPublishing(free.event.id);
-    await free.store.finishPublishing(
-      free.event.id,
-      "42345678901234567",
-      250,
-    );
+    await free.store.finishPublishing(free.event.id, "42345678901234567", 250);
     await paid.store.claimEventForPublishing(paid.event.id);
-    await paid.store.finishPublishing(
-      paid.event.id,
-      "52345678901234567",
-      250,
-    );
+    await paid.store.finishPublishing(paid.event.id, "52345678901234567", 250);
 
     await assert.rejects(
-      free.store.confirmRsvp(
-        free.event.id,
-        "62345678901234567",
-        400,
-      ),
+      free.store.confirmRsvp(free.event.id, "62345678901234567", 400),
       EventFinishedError,
     );
     await assert.rejects(
-      paid.store.reserveTicketCheckout(
-        paid.event.id,
-        "72345678901234567",
-        400,
-      ),
+      paid.store.reserveTicketCheckout(paid.event.id, "72345678901234567", 400),
       TicketSalesClosedError,
     );
   } finally {
@@ -316,30 +263,16 @@ test("manually closes free RSVPs and paid ticket sales", async () => {
         context === free ? "42345678901234567" : "52345678901234567",
         200,
       );
-      assert.equal(
-        await context.store.closeEventAdmission(context.event.id, 300),
-        true,
-      );
-      assert.equal(
-        await context.store.closeEventAdmission(context.event.id, 301),
-        false,
-      );
+      assert.equal(await context.store.closeEventAdmission(context.event.id, 300), true);
+      assert.equal(await context.store.closeEventAdmission(context.event.id, 301), false);
     }
 
     await assert.rejects(
-      free.store.confirmRsvp(
-        free.event.id,
-        "62345678901234567",
-        302,
-      ),
+      free.store.confirmRsvp(free.event.id, "62345678901234567", 302),
       EventAdmissionClosedError,
     );
     await assert.rejects(
-      paid.store.reserveTicketCheckout(
-        paid.event.id,
-        "72345678901234567",
-        302,
-      ),
+      paid.store.reserveTicketCheckout(paid.event.id, "72345678901234567", 302),
       TicketSalesClosedError,
     );
   } finally {
@@ -353,11 +286,7 @@ test("records admission interest exactly once per member and kind", async () => 
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
 
     assert.equal(
       await context.store.recordInterest(
@@ -401,54 +330,40 @@ test("recognizes original announcements and recorded reminder buttons", async ()
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
-    await context.store.recordEventReminder(
-      context.event.id,
-      "52345678901234567",
-      300,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    await context.store.recordEventReminder(context.event.id, "52345678901234567", 300);
 
     assert.equal(
-      (await context.store.getEventByMessageId(
-        context.event.guild_id,
-        "42345678901234567",
-      ))?.id,
+      (
+        await context.store.getEventByMessageId(
+          context.event.guild_id,
+          "42345678901234567",
+        )
+      )?.id,
       context.event.id,
     );
     assert.equal(
-      (await context.store.getEventByAdmissionMessageId(
-        context.event.guild_id,
-        "52345678901234567",
-      ))?.id,
+      (
+        await context.store.getEventByAdmissionMessageId(
+          context.event.guild_id,
+          "52345678901234567",
+        )
+      )?.id,
       context.event.id,
     );
-    assert.deepEqual(
-      await context.store.getEventReminderMessageIds(context.event.id),
-      ["52345678901234567"],
-    );
+    assert.deepEqual(await context.store.getEventReminderMessageIds(context.event.id), [
+      "52345678901234567",
+    ]);
     assert.equal(
-      await context.store.isEventAdmissionMessage(
-        context.event.id,
-        "42345678901234567",
-      ),
+      await context.store.isEventAdmissionMessage(context.event.id, "42345678901234567"),
       true,
     );
     assert.equal(
-      await context.store.isEventAdmissionMessage(
-        context.event.id,
-        "52345678901234567",
-      ),
+      await context.store.isEventAdmissionMessage(context.event.id, "52345678901234567"),
       true,
     );
     assert.equal(
-      await context.store.isEventAdmissionMessage(
-        context.event.id,
-        "62345678901234567",
-      ),
+      await context.store.isEventAdmissionMessage(context.event.id, "62345678901234567"),
       false,
     );
   } finally {
@@ -461,11 +376,7 @@ test("records only real RSVP state changes and queues their audit trail", async 
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
 
     const confirmed = await context.store.confirmRsvp(
       context.event.id,
@@ -480,10 +391,7 @@ test("records only real RSVP state changes and queues their audit trail", async 
 
     assert.deepEqual(confirmed, { changed: true, status: "active" });
     assert.deepEqual(duplicate, { changed: false, status: "active" });
-    assert.equal(
-      await context.store.countRsvpHistory(context.event.id),
-      1,
-    );
+    assert.equal(await context.store.countRsvpHistory(context.event.id), 1);
 
     const cancellation = await context.store.cancelRsvp(
       context.event.id,
@@ -504,10 +412,7 @@ test("records only real RSVP state changes and queues their audit trail", async 
       changed: false,
       status: "cancelled",
     });
-    assert.equal(
-      await context.store.countRsvpHistory(context.event.id),
-      2,
-    );
+    assert.equal(await context.store.countRsvpHistory(context.event.id), 2);
 
     const audits = await context.store.getPendingAudit(500);
     assert.deepEqual(
@@ -525,35 +430,16 @@ test("enforces capacity for free RSVPs and releases it on cancellation", async (
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
-    await context.store.confirmRsvp(
-      context.event.id,
-      "52345678901234567",
-      300,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    await context.store.confirmRsvp(context.event.id, "52345678901234567", 300);
     await assert.rejects(
-      context.store.confirmRsvp(
-        context.event.id,
-        "62345678901234567",
-        301,
-      ),
+      context.store.confirmRsvp(context.event.id, "62345678901234567", 301),
       RsvpCapacityReachedError,
     );
-    await context.store.cancelRsvp(
-      context.event.id,
-      "52345678901234567",
-      302,
-    );
+    await context.store.cancelRsvp(context.event.id, "52345678901234567", 302);
     assert.equal(
-      (await context.store.confirmRsvp(
-        context.event.id,
-        "62345678901234567",
-        303,
-      )).changed,
+      (await context.store.confirmRsvp(context.event.id, "62345678901234567", 303))
+        .changed,
       true,
     );
   } finally {
@@ -566,17 +452,10 @@ test("rejects RSVPs before an event is published", async () => {
 
   try {
     await assert.rejects(
-      context.store.confirmRsvp(
-        context.event.id,
-        "52345678901234567",
-        300,
-      ),
+      context.store.confirmRsvp(context.event.id, "52345678901234567", 300),
       EventUnavailableError,
     );
-    assert.equal(
-      await context.store.countRsvpHistory(context.event.id),
-      0,
-    );
+    assert.equal(await context.store.countRsvpHistory(context.event.id), 0);
   } finally {
     await context.close();
   }
@@ -590,18 +469,10 @@ test("rejects RSVPs for paid events", async () => {
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
 
     await assert.rejects(
-      context.store.confirmRsvp(
-        context.event.id,
-        "52345678901234567",
-        300,
-      ),
+      context.store.confirmRsvp(context.event.id, "52345678901234567", 300),
       EventUnavailableError,
     );
   } finally {
@@ -663,10 +534,7 @@ test("keeps open event forms across database pool restarts", async () => {
 
     pool = new adapter.Pool();
     store = new Store(pool);
-    const pending = await store.getPendingEventCreate(
-      "persistent-form",
-      200,
-    );
+    const pending = await store.getPendingEventCreate("persistent-form", 200);
 
     assert.equal(pending?.user_id, "12345678901234567");
     assert.equal(pending?.guild_id, "22345678901234567");
@@ -679,10 +547,7 @@ test("keeps open event forms across database pool restarts", async () => {
     assert.equal(pending?.ticket_currency, "aud");
     assert.equal(pending?.ticket_limit, 50);
     assert.equal(pending?.test_mode, true);
-    assert.equal(
-      await store.getPendingEventCreate("persistent-form", 1_000),
-      undefined,
-    );
+    assert.equal(await store.getPendingEventCreate("persistent-form", 1_000), undefined);
     assert.equal(
       await store.consumePendingEventCreate(
         "persistent-form",
@@ -699,10 +564,7 @@ test("keeps open event forms across database pool restarts", async () => {
       200,
     );
     assert.equal(consumed?.artwork_name, "new-artwork.png");
-    assert.equal(
-      await store.getPendingEventCreate("persistent-form", 200),
-      undefined,
-    );
+    assert.equal(await store.getPendingEventCreate("persistent-form", 200), undefined);
   } finally {
     await store.close();
   }
@@ -713,16 +575,8 @@ test("parks audit records after repeated delivery failures", async () => {
 
   try {
     await context.store.claimEventForPublishing(context.event.id);
-    await context.store.finishPublishing(
-      context.event.id,
-      "42345678901234567",
-      200,
-    );
-    await context.store.confirmRsvp(
-      context.event.id,
-      "52345678901234567",
-      300,
-    );
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    await context.store.confirmRsvp(context.event.id, "52345678901234567", 300);
 
     const [record] = await context.store.getPendingAudit(400);
     assert.ok(record);

@@ -15,9 +15,7 @@ export const commandDefinitions = [
     .setDescription("Create and manage club events")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .addSubcommand((subcommand) =>
-      subcommand
-        .setName("create")
-        .setDescription("Create a new event announcement"),
+      subcommand.setName("create").setDescription("Create a new event announcement"),
     )
     .toJSON(),
   new ContextMenuCommandBuilder()

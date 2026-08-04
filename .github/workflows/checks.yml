@@ -2,7 +2,6 @@ name: Checks
 
 on:
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -22,6 +21,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
 
       - name: Type-check
         run: pnpm run check

@@ -17,10 +17,7 @@ test("serves health and forwards an untouched signed Stripe webhook body", async
 
   try {
     const healthResponse = responseFixture();
-    await handler(
-      { method: "GET", url: "/health", headers: {} },
-      healthResponse,
-    );
+    await handler({ method: "GET", url: "/health", headers: {} }, healthResponse);
     assert.equal(healthResponse.status, 200);
     assert.deepEqual(JSON.parse(healthResponse.body), { ready: true });
 
@@ -47,10 +44,7 @@ test("serves health and forwards an untouched signed Stripe webhook body", async
     assert.equal(received.mode, "test");
 
     const unsignedResponse = responseFixture();
-    await handler(
-      requestFixture("/stripe/webhook", payload),
-      unsignedResponse,
-    );
+    await handler(requestFixture("/stripe/webhook", payload), unsignedResponse);
     assert.equal(unsignedResponse.status, 400);
   } finally {
     server.close();

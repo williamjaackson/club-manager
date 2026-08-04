@@ -1,9 +1,5 @@
-import Stripe from "stripe";
-import {
-  type EventRecord,
-  type Store,
-  type TicketOrderRecord,
-} from "./database.js";
+import type Stripe from "stripe";
+import type { EventRecord, Store, TicketOrderRecord } from "./database.js";
 
 export type TicketCheckoutResult =
   | { alreadyPaid: true; order: TicketOrderRecord }
@@ -48,15 +44,9 @@ export class TicketingService {
     this.#testMode = testMode;
   }
 
-  async startCheckout(
-    event: EventRecord,
-    userId: string,
-  ): Promise<TicketCheckoutResult> {
+  async startCheckout(event: EventRecord, userId: string): Promise<TicketCheckoutResult> {
     const stripe = this.#stripeForEvent(event);
-    const reservation = await this.#store.reserveTicketCheckout(
-      event.id,
-      userId,
-    );
+    const reservation = await this.#store.reserveTicketCheckout(event.id, userId);
 
     if (reservation.alreadyPaid) {
       return { alreadyPaid: true, order: reservation.order };
@@ -103,10 +93,7 @@ export class TicketingService {
               unit_amount: event.ticket_price_cents,
               product_data: {
                 name: event.title,
-                description: `${event.schedule_text} — ${event.location}`.slice(
-                  0,
-                  500,
-                ),
+                description: `${event.schedule_text} — ${event.location}`.slice(0, 500),
               },
             },
           },
@@ -114,9 +101,7 @@ export class TicketingService {
         metadata,
         payment_intent_data: { metadata },
         customer_creation: "always",
-        success_url:
-          `${this.#publicBaseUrl}/stripe/success?session_id=` +
-          "{CHECKOUT_SESSION_ID}",
+        success_url: `${this.#publicBaseUrl}/stripe/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${this.#publicBaseUrl}/stripe/cancel`,
         expires_at: Math.floor(order.checkout_expires_at),
       },
@@ -149,11 +134,7 @@ export class TicketingService {
     const webhook = this.#webhookForMode(mode);
 
     try {
-      event = webhook.stripe.webhooks.constructEvent(
-        payload,
-        signature,
-        webhook.secret,
-      );
+      event = webhook.stripe.webhooks.constructEvent(payload, signature, webhook.secret);
     } catch (error) {
       throw new InvalidStripeWebhookError(
         error instanceof Error ? error.message : "Invalid Stripe signature",
@@ -186,9 +167,7 @@ export class TicketingService {
   async checkoutStatus(
     checkoutSessionId: string,
   ): Promise<"paid" | "pending" | "refunded" | "unknown"> {
-    const order = await this.#store.getTicketOrderByCheckoutSession(
-      checkoutSessionId,
-    );
+    const order = await this.#store.getTicketOrderByCheckoutSession(checkoutSessionId);
     return order?.status ?? "unknown";
   }
 
@@ -289,11 +268,7 @@ export class TicketingService {
       details.customerName = checkout.customer_details.name;
     }
 
-    await this.#store.fulfillTicketOrder(
-      order.id,
-      checkout.id,
-      details,
-    );
+    await this.#store.fulfillTicketOrder(order.id, checkout.id, details);
   }
 
   #stripeForEvent(event: EventRecord): Stripe {

@@ -90,7 +90,12 @@ Each real state change creates an immutable audit message:
 ```text
 @member RSVP’d for Event Name.
 @member cancelled their RSVP for Event Name.
+@member bought a ticket for Event Name.
+@member showed interest in Event Name.
+@member showed ticket interest in Event Name.
 ```
+
+Paid-ticket confirmations are also sent to the buyer as a direct message.
 
 The first RSVP or ticket-button click by each member also logs that they showed
 interest, even if they do not verify, confirm, or finish Checkout.
@@ -143,7 +148,9 @@ first publish when needed.
 
 1. Set `STRIPE_SECRET_KEY` to the secret key from the Stripe Dashboard.
 2. Proxy `/stripe/` from `PUBLIC_BASE_URL` to the bot's loopback listener at
-   `127.0.0.1:3001` through HTTPS.
+   `127.0.0.1:3001` through HTTPS. (Compose maps host port 3001 to the
+   container's `HEALTH_PORT`, which defaults to 3000 — the `stripe listen`
+   example below talks to the bot directly, so it uses 3000.)
 3. Add a Stripe webhook endpoint at
    `https://your-public-host/stripe/webhook`.
 4. Subscribe it to `checkout.session.completed`,
@@ -200,10 +207,19 @@ Requirements:
 ```sh
 pnpm install
 pnpm run db:setup
+pnpm run lint
 pnpm run check
 pnpm test
 pnpm run dev
 ```
+
+Linting and formatting use [Biome](https://biomejs.dev); run
+`pnpm run format` to apply fixes. CI runs lint, type-check, and tests on
+every pull request and again before every deploy.
+
+Deploys run from GitHub Actions over SSH. Run
+`./scripts/setup-deploy-user.sh` once to create a dedicated `deploy` user on
+the VPS, pin its host key, and rotate the Actions secrets away from root.
 
 Or use the development service:
 

@@ -1,7 +1,4 @@
-import {
-  Client,
-  escapeMarkdown,
-} from "discord.js";
+import { type Client, escapeMarkdown } from "discord.js";
 import type { AuditOutboxRecord, Store } from "./database.js";
 
 export class AuditLogger {
@@ -112,10 +109,7 @@ export class AuditLogger {
           ` ${eventUrl}`,
       );
     } catch (error) {
-      console.error(
-        `Failed to DM ticket confirmation for audit ${record.id}`,
-        error,
-      );
+      console.error(`Failed to DM ticket confirmation for audit ${record.id}`, error);
     }
   }
 }

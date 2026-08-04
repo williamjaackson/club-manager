@@ -20,15 +20,23 @@ test("logs ticket interest to the audit channel", async () => {
       channels: {
         async fetch() {
           return {
-            isSendable() { return true; },
-            async send(options) { sent = options; },
+            isSendable() {
+              return true;
+            },
+            async send(options) {
+              sent = options;
+            },
           };
         },
       },
     },
     {
-      async getPendingAudit() { return [record]; },
-      async markAuditSent(id) { markedId = id; },
+      async getPendingAudit() {
+        return [record];
+      },
+      async markAuditSent(id) {
+        markedId = id;
+      },
     },
     "42345678901234567",
   );
@@ -65,22 +73,32 @@ test("posts ticket purchases and DMs the buyer", async () => {
       channels: {
         async fetch() {
           return {
-            isSendable() { return true; },
-            async send(options) { sent = options; },
+            isSendable() {
+              return true;
+            },
+            async send(options) {
+              sent = options;
+            },
           };
         },
       },
       users: {
         async fetch() {
           return {
-            async send(content) { dm = content; },
+            async send(content) {
+              dm = content;
+            },
           };
         },
       },
     },
     {
-      async getPendingAudit() { return [record]; },
-      async markAuditSent(id) { markedId = id; },
+      async getPendingAudit() {
+        return [record];
+      },
+      async markAuditSent(id) {
+        markedId = id;
+      },
     },
     "42345678901234567",
   );
@@ -102,8 +120,12 @@ test("marks the audit sent even when the confirmation DM fails", async () => {
       channels: {
         async fetch() {
           return {
-            isSendable() { return true; },
-            async send(options) { sent = options; },
+            isSendable() {
+              return true;
+            },
+            async send(options) {
+              sent = options;
+            },
           };
         },
       },
@@ -114,8 +136,12 @@ test("marks the audit sent even when the confirmation DM fails", async () => {
       },
     },
     {
-      async getPendingAudit() { return [record]; },
-      async markAuditSent(id) { markedId = id; },
+      async getPendingAudit() {
+        return [record];
+      },
+      async markAuditSent(id) {
+        markedId = id;
+      },
     },
     "42345678901234567",
   );
@@ -128,7 +154,13 @@ test("marks the audit sent even when the confirmation DM fails", async () => {
 
 test("flush never rejects even when the store fails", async () => {
   const logger = new AuditLogger(
-    { channels: { async fetch() { throw new Error("unreachable"); } } },
+    {
+      channels: {
+        async fetch() {
+          throw new Error("unreachable");
+        },
+      },
+    },
     {
       async getPendingAudit() {
         throw new Error("database is down");

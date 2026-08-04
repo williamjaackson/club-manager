@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  InvalidStripeWebhookError,
-  TicketingService,
-} from "../dist/ticketing.js";
+import { InvalidStripeWebhookError, TicketingService } from "../dist/ticketing.js";
 
 const event = {
   id: 42,
@@ -111,10 +108,7 @@ test("creates an idempotent Stripe Checkout Session for a ticket reservation", a
     createParameters.success_url,
     "https://club.example/stripe/success?session_id={CHECKOUT_SESSION_ID}",
   );
-  assert.equal(
-    requestOptions.idempotencyKey,
-    "ticket-order-7-attempt-1",
-  );
+  assert.equal(requestOptions.idempotencyKey, "ticket-order-7-attempt-1");
 });
 
 test("routes test events and webhooks through Stripe sandbox mode", async () => {
@@ -236,10 +230,7 @@ test("does not reserve test-event capacity without complete sandbox credentials"
   );
 
   await assert.rejects(
-    service.startCheckout(
-      { ...event, test_mode: true },
-      pendingOrder.user_id,
-    ),
+    service.startCheckout({ ...event, test_mode: true }, pendingOrder.user_id),
     /STRIPE_TEST_SECRET_KEY.*STRIPE_TEST_WEBHOOK_SECRET/,
   );
 });
@@ -354,9 +345,7 @@ test("revokes a ticket after a charge is fully refunded", async () => {
     refunded: true,
     payment_intent: "pi_test_ticket",
     refunds: {
-      data: [
-        { id: "re_test_ticket", status: "succeeded" },
-      ],
+      data: [{ id: "re_test_ticket", status: "succeeded" }],
     },
   };
   const stripe = {

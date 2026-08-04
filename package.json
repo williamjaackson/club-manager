@@ -14,7 +14,9 @@
     "db:setup": "pnpm run build && node --env-file=.env dist/setup-database.js",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "test": "pnpm run build && node --test"
+    "test": "pnpm run build && node --test",
+    "lint": "biome check .",
+    "format": "biome check --write ."
   },
   "dependencies": {
     "@discordjs/builders": "^1.14.1",
@@ -24,7 +26,8 @@
     "ws": "^8.21.1"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@biomejs/biome": "2.5.6",
+    "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
     "pg-mem": "^3.0.14",
     "tsx": "^4.20.0",

@@ -2,9 +2,9 @@ import {
   Client,
   Events,
   GatewayIntentBits,
-  MessageFlags,
   type Interaction,
   type InteractionReplyOptions,
+  MessageFlags,
 } from "discord.js";
 import Stripe from "stripe";
 import { AuditLogger } from "./audit.js";
@@ -62,10 +62,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 
   try {
     if (config.guildId) {
-      await readyClient.application.commands.set(
-        commandDefinitions,
-        config.guildId,
-      );
+      await readyClient.application.commands.set(commandDefinitions, config.guildId);
     } else {
       await readyClient.application.commands.set(commandDefinitions);
     }
@@ -88,10 +85,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 
     console.log(`RSVP audit channel ready: ${config.rsvpLogChannelId}`);
   } catch (error) {
-    console.error(
-      `RSVP audit channel ${config.rsvpLogChannelId} is unavailable`,
-      error,
-    );
+    console.error(`RSVP audit channel ${config.rsvpLogChannelId} is unavailable`, error);
   }
 
   audit.start();
@@ -120,10 +114,7 @@ function errorMessage(error: unknown): string {
   return "Something went wrong while processing that interaction.";
 }
 
-async function respondWithError(
-  interaction: Interaction,
-  error: unknown,
-): Promise<void> {
+async function respondWithError(interaction: Interaction, error: unknown): Promise<void> {
   if (!interaction.isRepliable()) return;
 
   const response: InteractionReplyOptions = {
