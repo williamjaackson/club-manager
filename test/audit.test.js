@@ -107,7 +107,8 @@ test("posts ticket purchases and DMs the buyer", async () => {
 
   assert.equal(markedId, record.id);
   assert.match(sent.content, /bought a ticket for/);
-  assert.match(dm, /test ticket for \*\*Paid event\*\* is confirmed/);
+  assert.match(dm, /Your ticket for \*\*Paid event\*\* is confirmed/);
+  assert.match(dm, /-# 🧪 Test event — Stripe test mode/);
   assert.match(dm, new RegExp(record.message_id));
 });
 

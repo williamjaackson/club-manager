@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ButtonStyle } from "discord.js";
 import {
+  buildCancellationComplete,
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
@@ -9,8 +10,10 @@ import {
   buildEventPreview,
   buildPublicEventMessage,
   buildReminderMessage,
+  buildRsvpComplete,
   buildRsvpPrompt,
   buildTicketCheckout,
+  buildTicketConfirmed,
 } from "../dist/event-ui.js";
 
 const event = {
@@ -60,7 +63,12 @@ test("serializes every step of the event-creation wizard", () => {
   );
   assert.deepEqual(
     schedule.components.map(({ component }) => component.custom_id),
-    ["event-starts-at", "event-ends-at", "event-ticket-sales-close-at"],
+    [
+      "event-starts-at",
+      "event-ends-at",
+      "event-ticket-sales-close-at",
+      "event-location-url",
+    ],
   );
   assert.deepEqual(
     admission.components.map(({ component }) => component.custom_id),
@@ -152,9 +160,10 @@ test("clearly labels Stripe test-mode events and checkout", () => {
   const checkout = buildTicketCheckout(testEvent, "https://checkout.stripe.com/test");
   const checkoutButton = checkout.components?.[0]?.components[0]?.toJSON();
 
-  assert.match(publicMessage.content ?? "", /TEST EVENT.*NO REAL MONEY/i);
+  assert.match(publicMessage.content ?? "", /-# 🧪 Test event — Stripe test mode/);
   assert.equal(publicButton?.label, "Test checkout — A$12.50");
-  assert.match(checkout.content ?? "", /No real money will be charged/i);
+  assert.match(checkout.content ?? "", /Stripe test card/);
+  assert.match(checkout.content ?? "", /-# 🧪 Test event — Stripe test mode/);
   assert.equal(checkoutButton?.label, "Open Stripe test checkout");
 });
 
@@ -203,8 +212,7 @@ test("shows structured event and ticket closing times", () => {
   const reminder = buildReminderMessage(timedEvent, "@everyone Reminder", 2_600);
   const reminderButton = reminder.components?.[0]?.components[0]?.toJSON();
 
-  assert.match(publicMessage.content ?? "", /<t:2000:F>/);
-  assert.match(publicMessage.content ?? "", /<t:3000:F>/);
+  assert.match(publicMessage.content ?? "", /📅 <t:2000:F> \(<t:2000:R>\) – <t:3000:t>/);
   assert.match(publicMessage.content ?? "", /Ticket sales close.*<t:2500:F>/s);
   assert.match(freeMessage.content ?? "", /RSVP capacity.*25 people/s);
   assert.match(freeMessage.content ?? "", /RSVPs close.*<t:3000:F>/s);
@@ -234,4 +242,42 @@ test("uses plain message text throughout the event flow", () => {
     assert.ok(message.content.length > 0);
     assert.ok(message.content.length <= 2_000);
   }
+});
+
+test("collapses same-day schedules and links Google Maps locations", () => {
+  const sameDay = buildPublicEventMessage({
+    ...event,
+    starts_at: 2_000,
+    ends_at: 3_000,
+    location_url: "https://maps.app.goo.gl/club123",
+  });
+  const multiDay = buildPublicEventMessage({
+    ...event,
+    starts_at: 2_000,
+    ends_at: 2_000 + 3 * 86_400,
+    location_url: null,
+  });
+
+  assert.match(sameDay.content ?? "", /📅 <t:2000:F> \(<t:2000:R>\) – <t:3000:t>/);
+  assert.doesNotMatch(sameDay.content ?? "", /Starts:|Finishes:/);
+  assert.match(
+    sameDay.content ?? "",
+    /📍 \[\*\*In person, Gold Coast — room TBD\*\*\]\(https:\/\/maps\.app\.goo\.gl\/club123\)/,
+  );
+
+  assert.match(multiDay.content ?? "", /\*\*Starts:\*\* <t:2000:F>/);
+  assert.match(multiDay.content ?? "", /\*\*Finishes:\*\* <t:261200:F>/);
+  assert.match(multiDay.content ?? "", /📍 \*\*In person, Gold Coast — room TBD\*\*/);
+});
+
+test("marks every test-mode interaction with the shared subtext note", () => {
+  const testEvent = { ...event, test_mode: true };
+  const note = /-# 🧪 Test event — Stripe test mode, no real money is charged/;
+
+  assert.match(buildPublicEventMessage(testEvent).content ?? "", note);
+  assert.match(buildRsvpPrompt(testEvent).content ?? "", note);
+  assert.match(buildRsvpComplete(testEvent, true).content ?? "", note);
+  assert.match(buildCancellationComplete(testEvent, true).content ?? "", note);
+  assert.match(buildTicketConfirmed(testEvent).content ?? "", note);
+  assert.doesNotMatch(buildPublicEventMessage(event).content ?? "", /-# 🧪/);
 });

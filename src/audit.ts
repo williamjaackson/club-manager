@@ -1,5 +1,6 @@
 import { type Client, escapeMarkdown } from "discord.js";
 import type { AuditOutboxRecord, Store } from "./database.js";
+import { testModeNote } from "./event-ui.js";
 
 export class AuditLogger {
   readonly #client: Client;
@@ -102,11 +103,12 @@ export class AuditLogger {
   ): Promise<void> {
     try {
       const user = await this.#client.users.fetch(record.user_id);
+      const note = testModeNote(record.test_mode);
       await user.send(
-        (record.test_mode
-          ? `✅ Your test ticket for **${escapeMarkdown(record.title)}** is confirmed. No real payment was made.`
-          : `✅ Your ticket for **${escapeMarkdown(record.title)}** is confirmed. Stripe has emailed your receipt.`) +
-          ` ${eventUrl}`,
+        `✅ Your ticket for **${escapeMarkdown(record.title)}** is confirmed.` +
+          (record.test_mode ? "" : " Stripe has emailed your receipt.") +
+          ` ${eventUrl}` +
+          (note ? `\n${note}` : ""),
       );
     } catch (error) {
       console.error(`Failed to DM ticket confirmation for audit ${record.id}`, error);

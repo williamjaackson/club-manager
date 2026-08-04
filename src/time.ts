@@ -55,3 +55,11 @@ export function formatScheduleText(startsAt: number, endsAt?: number): string {
     ? `${start} (Brisbane)`
     : `${start} – ${formatter.format(new Date(endsAt * 1000))} (Brisbane)`;
 }
+
+export function isSameBrisbaneDay(a: number, b: number): boolean {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BRISBANE_TIME_ZONE,
+    dateStyle: "short",
+  });
+  return formatter.format(new Date(a * 1000)) === formatter.format(new Date(b * 1000));
+}
