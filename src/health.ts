@@ -11,8 +11,9 @@ export function startHttpServer(
   client: Client,
   ticketing: TicketingService,
   port: number,
+  onWebhookProcessed?: () => void,
 ): Server {
-  const server = createHttpServer(client, ticketing);
+  const server = createHttpServer(client, ticketing, onWebhookProcessed);
 
   server.listen(port, "0.0.0.0", () => {
     console.log(`HTTP server listening on port ${port}`);
@@ -24,6 +25,7 @@ export function startHttpServer(
 export function createHttpServer(
   client: Client,
   ticketing: TicketingService,
+  onWebhookProcessed?: () => void,
 ): Server {
   return createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
@@ -57,6 +59,7 @@ export function createHttpServer(
           url.pathname === "/stripe/test-webhook" ? "test" : "primary",
         );
         response.writeHead(200).end("Received\n");
+        onWebhookProcessed?.();
       } catch (error) {
         if (error instanceof InvalidStripeWebhookError) {
           response.writeHead(400).end("Invalid webhook\n");

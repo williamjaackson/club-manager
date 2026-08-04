@@ -17,7 +17,8 @@ export type AuditAction =
   | "interest_rsvp"
   | "interest_ticket"
   | "rsvp"
-  | "cancel";
+  | "cancel"
+  | "ticket_paid";
 export type InterestKind = "rsvp" | "ticket";
 export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
@@ -156,6 +157,7 @@ export interface AuditOutboxRecord {
   guild_id: string;
   announcement_channel_id: string;
   message_id: string;
+  test_mode: boolean;
 }
 
 export interface RsvpChange {
@@ -377,7 +379,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         user_id TEXT NOT NULL,
         action TEXT NOT NULL CONSTRAINT audit_outbox_action_check
           CHECK (action IN (
-            'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel'
+            'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
+            'ticket_paid'
           )),
         created_at DOUBLE PRECISION NOT NULL,
         next_attempt_at DOUBLE PRECISION NOT NULL,
@@ -390,7 +393,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         DROP CONSTRAINT IF EXISTS audit_outbox_action_check;
       ALTER TABLE audit_outbox ADD CONSTRAINT audit_outbox_action_check
         CHECK (action IN (
-          'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel'
+          'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
+          'ticket_paid'
         ));
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
@@ -1181,6 +1185,14 @@ export class Store {
           orderId,
         ],
       );
+      await client.query(
+        `
+          INSERT INTO audit_outbox (
+            event_id, user_id, action, created_at, next_attempt_at
+          ) VALUES ($1, $2, 'ticket_paid', $3, $4)
+        `,
+        [order.event_id, order.user_id, now, now],
+      );
       await client.query("COMMIT");
       return true;
     } catch (error) {
@@ -1345,7 +1357,8 @@ export class Store {
           events.title,
           events.guild_id,
           events.announcement_channel_id,
-          events.message_id
+          events.message_id,
+          events.test_mode
         FROM audit_outbox
         JOIN events ON events.id = audit_outbox.event_id
         WHERE

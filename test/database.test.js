@@ -143,6 +143,14 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(paid?.status, "paid");
     assert.equal(paid?.amount_total, 1250);
     assert.equal(paid?.customer_email, "member@example.com");
+
+    const audits = await context.store.getPendingAudit(440);
+    assert.deepEqual(
+      audits.map(({ action }) => action),
+      ["ticket_paid"],
+    );
+    assert.equal(audits[0]?.user_id, "52345678901234567");
+    assert.equal(audits[0]?.test_mode, false);
     assert.equal(
       await context.store.refundTicketOrderByPaymentIntent(
         "pi_test_ticket",

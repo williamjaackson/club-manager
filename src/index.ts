@@ -43,7 +43,11 @@ const ticketing = new TicketingService(
   stripeTestMode,
 );
 const eventController = new EventController(store, audit, ticketing);
-const httpServer = startHttpServer(client, ticketing, config.healthPort);
+const httpServer = startHttpServer(client, ticketing, config.healthPort, () => {
+  void audit.flush().catch((error: unknown) => {
+    console.error("Failed to flush audit outbox after Stripe webhook", error);
+  });
+});
 let shuttingDown = false;
 
 client.once(Events.ClientReady, async (readyClient) => {
