@@ -16,7 +16,7 @@ function port(value: string | undefined): number {
   const parsed = Number(value ?? "3000");
 
   if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65_535) {
-    throw new Error("HEALTH_PORT must be an integer between 1 and 65535");
+    throw new Error("HTTP_PORT must be an integer between 1 and 65535");
   }
 
   return parsed;
@@ -45,7 +45,9 @@ function publicUrl(value: string): string {
 export const config = {
   token: required("DISCORD_TOKEN"),
   guildId: process.env.DISCORD_GUILD_ID?.trim() || undefined,
-  healthPort: port(process.env.HEALTH_PORT),
+  // HEALTH_PORT is the legacy name from when this listener only served
+  // health checks; it now also serves the Stripe webhook endpoints.
+  httpPort: port(process.env.HTTP_PORT ?? process.env.HEALTH_PORT),
   databaseUrl: required("DATABASE_URL"),
   publicBaseUrl: publicUrl(required("PUBLIC_BASE_URL")),
   stripeSecretKey: required("STRIPE_SECRET_KEY"),

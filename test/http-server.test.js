@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createHttpServer } from "../dist/health.js";
+import { createHttpServer } from "../dist/http.js";
 
 test("serves health and forwards an untouched signed Stripe webhook body", async () => {
   const payload = Buffer.from('{"type":"checkout.session.completed"}');

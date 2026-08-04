@@ -1,5 +1,6 @@
 import { neonConfig, Pool, type PoolClient } from "@neondatabase/serverless";
 import ws from "ws";
+import { currentTimestamp } from "./time.js";
 
 neonConfig.webSocketConstructor = ws;
 
@@ -217,6 +218,8 @@ export function createDatabasePool(connectionString: string): Pool {
   return pool;
 }
 
+// Neon's pooled endpoint (PgBouncer) can't run schema DDL reliably; strip the
+// -pooler suffix to talk to the database directly for setup.
 export function directDatabaseUrl(connectionString: string): string {
   const url = new URL(connectionString);
   url.hostname = url.hostname.replace("-pooler.", ".");
@@ -1396,8 +1399,4 @@ export class Store {
     );
     return (result.rows[0] as { status: RsvpStatus } | undefined)?.status;
   }
-}
-
-function currentTimestamp(): number {
-  return Math.floor(Date.now() / 1000);
 }
