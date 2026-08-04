@@ -66,6 +66,7 @@ import {
   eventIds,
 } from "./event-ui.js";
 import { findOrCreateEventWebhook } from "./event-webhook.js";
+import { ScheduledEventSync } from "./scheduled-events.js";
 import type { ResolvedGuildSettings, SettingsManager } from "./settings.js";
 import type { TicketingService } from "./ticketing.js";
 import {
@@ -81,6 +82,7 @@ export class EventController {
   readonly #ticketing: TicketingService;
   readonly #settings: SettingsManager;
   readonly #refresher: { markDirty(eventId: number): void };
+  readonly #scheduledEvents: ScheduledEventSync;
   readonly #webhookLookups = new Map<string, Promise<Webhook<WebhookType.Incoming>>>();
 
   constructor(
@@ -98,6 +100,7 @@ export class EventController {
     this.#ticketing = ticketing;
     this.#settings = settings;
     this.#refresher = refresher;
+    this.#scheduledEvents = new ScheduledEventSync(store);
   }
 
   async handleCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
@@ -638,6 +641,7 @@ export class EventController {
 
     const { event, refunds } = await this.#store.applyEventEdit(pending);
     await this.#store.deletePendingEventCreate(pending.token);
+    await this.#scheduledEvents.update(interaction.guild, event);
 
     let refundSummary = "";
     if (refunds.length > 0) {
@@ -889,6 +893,8 @@ export class EventController {
       return;
     }
 
+    await this.#scheduledEvents.cancel(interaction.guild, cancelled.event);
+
     let refundSummary = "";
     if (cancelled.refunds.length > 0) {
       const { refunded, failed } = await this.#ticketing.refundCancelledEventOrders(
@@ -1133,6 +1139,8 @@ export class EventController {
 
       throw error;
     }
+
+    await this.#scheduledEvents.create(interaction.guild, event);
 
     const url =
       `https://discord.com/channels/${event.guild_id}/` +

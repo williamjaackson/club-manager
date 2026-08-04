@@ -43,6 +43,7 @@ export interface EventRecord {
   published_at: number | null;
   edited_at: number | null;
   cancelled_at: number | null;
+  scheduled_event_id: string | null;
 }
 
 export interface NewEventDraft {
@@ -322,7 +323,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         created_at DOUBLE PRECISION NOT NULL,
         published_at DOUBLE PRECISION,
         edited_at DOUBLE PRECISION,
-        cancelled_at DOUBLE PRECISION
+        cancelled_at DOUBLE PRECISION,
+        scheduled_event_id TEXT
       );
 
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
@@ -335,6 +337,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS location_url TEXT;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS edited_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS cancelled_at DOUBLE PRECISION;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS scheduled_event_id TEXT;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -1821,6 +1824,16 @@ export class Store {
     } finally {
       client.release();
     }
+  }
+
+  async setEventScheduledEventId(
+    eventId: number,
+    scheduledEventId: string | null,
+  ): Promise<void> {
+    await this.#pool.query("UPDATE events SET scheduled_event_id = $1 WHERE id = $2", [
+      scheduledEventId,
+      eventId,
+    ]);
   }
 
   async listEvents(

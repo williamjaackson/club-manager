@@ -40,6 +40,10 @@ The optional ticket close time can close paid sales before the event finishes
 and can only be used with a ticket price. Without it, ticket sales close at the
 finish time when one is set.
 
+Publishing also creates a matching event in Discord's native **Events** tab
+(when the bot has the Manage Events permission), so members get Discord's own
+"interested" reminders. Editing keeps it in sync and cancelling removes it.
+
 Select **Stripe test event** with a ticket price to exercise the complete
 Stripe sandbox Checkout and ticket-fulfillment flow. Test events are clearly
 labelled and never use the primary Stripe key or charge real money.
@@ -178,6 +182,7 @@ The bot requires these permissions in announcement and audit channels:
 - Embed Links
 - Attach Files
 - Manage Webhooks (announcement channels only)
+- Manage Events (to mirror announcements into Discord's Events tab)
 - Mention Everyone (only when `/reminder` should ping `@everyone`)
 
 Published announcements are sent through a bot-owned webhook using the
