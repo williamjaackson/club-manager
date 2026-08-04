@@ -277,6 +277,10 @@ export class EventController {
       interaction.fields.getTextInputValue(eventIds.ticketSalesCloseAt),
       "Ticket sales close",
     );
+    const locationUrl = optionalHttpsUrl(
+      interaction.fields.getTextInputValue(eventIds.locationUrl),
+      "Google Maps link",
+    );
     if (startsAt <= currentTimestamp()) {
       throw new Error("Start time must be in the future.");
     }
@@ -306,6 +310,7 @@ export class EventController {
         startsAt,
         ...(endsAt !== undefined ? { endsAt } : {}),
         ...(ticketSalesCloseAt !== undefined ? { ticketSalesCloseAt } : {}),
+        ...(locationUrl !== undefined ? { locationUrl } : {}),
       },
     );
     if (!saved) {
@@ -370,6 +375,7 @@ export class EventController {
       startsAt: pending.starts_at,
     };
     if (pending.ends_at !== null) draft.endsAt = pending.ends_at;
+    if (pending.location_url) draft.locationUrl = pending.location_url;
     if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
     if (pending.artwork_name) draft.artworkName = pending.artwork_name;
     if (ticketPriceCents !== undefined) {
@@ -885,6 +891,22 @@ function safeAttachmentName(name: string): string {
     .replaceAll(/-+/g, "-")
     .slice(-100);
   return sanitized || "event-artwork.png";
+}
+
+function optionalHttpsUrl(value: string, fieldName: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`${fieldName} must be a valid https:// link.`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`${fieldName} must be a valid https:// link.`);
+  }
+  return parsed.toString();
 }
 
 function parseAnnouncementLink(

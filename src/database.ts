@@ -24,6 +24,7 @@ export interface EventRecord {
   title: string;
   schedule_text: string;
   location: string;
+  location_url: string | null;
   announcement: string;
   artwork_url: string | null;
   artwork_name: string | null;
@@ -46,6 +47,7 @@ export interface NewEventDraft {
   title: string;
   scheduleText: string;
   location: string;
+  locationUrl?: string;
   announcement: string;
   artworkUrl?: string;
   artworkName?: string;
@@ -65,6 +67,7 @@ export interface PendingEventCreateRecord {
   announcement_channel_id: string | null;
   title: string | null;
   location: string | null;
+  location_url: string | null;
   announcement: string | null;
   artwork_url: string | null;
   artwork_name: string | null;
@@ -111,6 +114,7 @@ export interface PendingEventSchedule {
   startsAt: number;
   endsAt?: number;
   ticketSalesCloseAt?: number;
+  locationUrl?: string;
 }
 
 export interface TicketOrderRecord {
@@ -241,6 +245,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         title TEXT NOT NULL,
         schedule_text TEXT NOT NULL,
         location TEXT NOT NULL,
+        location_url TEXT,
         announcement TEXT NOT NULL,
         artwork_url TEXT,
         artwork_name TEXT,
@@ -264,6 +269,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS starts_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ends_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS location_url TEXT;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -272,6 +278,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         announcement_channel_id TEXT,
         title TEXT,
         location TEXT,
+        location_url TEXT,
         announcement TEXT,
         artwork_url TEXT,
         artwork_name TEXT,
@@ -303,6 +310,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS ends_at DOUBLE PRECISION;
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS location_url TEXT;
 
       CREATE TABLE IF NOT EXISTS ticket_orders (
         id SERIAL PRIMARY KEY,
@@ -442,6 +450,7 @@ export class Store {
           title,
           schedule_text,
           location,
+          location_url,
           announcement,
           artwork_url,
           artwork_name,
@@ -455,7 +464,7 @@ export class Store {
           created_at
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15, $16, $17
+          $10, $11, $12, $13, $14, $15, $16, $17, $18
         )
         RETURNING *
       `,
@@ -466,6 +475,7 @@ export class Store {
         draft.title,
         draft.scheduleText,
         draft.location,
+        draft.locationUrl ?? null,
         draft.announcement,
         draft.artworkUrl ?? null,
         draft.artworkName ?? null,
@@ -746,17 +756,22 @@ export class Store {
     const result = await this.#pool.query(
       `
         UPDATE pending_event_creates
-        SET starts_at = $1, ends_at = $2, ticket_sales_close_at = $3
+        SET
+          starts_at = $1,
+          ends_at = $2,
+          ticket_sales_close_at = $3,
+          location_url = $4
         WHERE
-          token = $4
-          AND user_id = $5
-          AND guild_id = $6
-          AND expires_at > $7
+          token = $5
+          AND user_id = $6
+          AND guild_id = $7
+          AND expires_at > $8
       `,
       [
         schedule.startsAt,
         schedule.endsAt ?? null,
         schedule.ticketSalesCloseAt ?? null,
+        schedule.locationUrl ?? null,
         token,
         userId,
         guildId,

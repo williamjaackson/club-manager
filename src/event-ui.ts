@@ -18,7 +18,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import type { EventRecord } from "./database.js";
-import { currentTimestamp } from "./time.js";
+import { currentTimestamp, isSameBrisbaneDay } from "./time.js";
 
 export type EventReplyOptions = Pick<
   InteractionReplyOptions,
@@ -37,7 +37,45 @@ export const eventIds = {
   ticketPrice: "event-ticket-price",
   capacity: "event-capacity",
   testMode: "event-test-mode",
+  locationUrl: "event-location-url",
 } as const;
+
+// One shared subtext line marks test-mode content everywhere; never
+// hand-write test-mode copy in an individual message.
+export function testModeNote(testMode: boolean): string {
+  return testMode ? "-# 🧪 Test event — Stripe test mode, no real money is charged" : "";
+}
+
+function withTestNote(event: EventRecord, content: string): string {
+  const note = testModeNote(event.test_mode);
+  return note ? `${content}\n\n${note}` : content;
+}
+
+function scheduleBlock(event: EventRecord, relative: boolean): string {
+  if (typeof event.starts_at !== "number") {
+    return `📅 **${event.schedule_text}**\n`;
+  }
+
+  const startTag = `<t:${event.starts_at}:F>${relative ? ` (<t:${event.starts_at}:R>)` : ""}`;
+  if (
+    typeof event.ends_at === "number" &&
+    isSameBrisbaneDay(event.starts_at, event.ends_at)
+  ) {
+    return `📅 ${startTag} – <t:${event.ends_at}:t>\n`;
+  }
+
+  let block = `📅 **Starts:** ${startTag}\n`;
+  if (typeof event.ends_at === "number") {
+    block += `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
+  }
+  return block;
+}
+
+function locationLine(event: EventRecord): string {
+  return event.location_url
+    ? `📍 [**${event.location}**](${event.location_url})`
+    : `📍 **${event.location}**`;
+}
 
 export function buildCreateEventDetailsModal(token: string): ModalBuilder {
   const channel = new ChannelSelectMenuBuilder()
@@ -111,6 +149,12 @@ export function buildCreateEventScheduleModal(token: string): ModalBuilder {
     .setPlaceholder("2026-08-09 17:00")
     .setMaxLength(16)
     .setRequired(false);
+  const locationUrl = new TextInputBuilder()
+    .setCustomId(eventIds.locationUrl)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("https://maps.app.goo.gl/…")
+    .setMaxLength(300)
+    .setRequired(false);
 
   return new ModalBuilder()
     .setCustomId(`event:create:schedule:${token}`)
@@ -128,6 +172,10 @@ export function buildCreateEventScheduleModal(token: string): ModalBuilder {
         .setLabel("Ticket sales close (optional)")
         .setDescription("Paid events only · may close before the finish.")
         .setTextInputComponent(ticketSalesCloseAt),
+      new LabelBuilder()
+        .setLabel("Google Maps link (optional)")
+        .setDescription("Turns the location line into a link.")
+        .setTextInputComponent(locationUrl),
     );
 }
 
@@ -302,11 +350,14 @@ export function buildCurrentRsvp(event: EventRecord): EventReplyOptions {
 }
 
 export function buildRsvpComplete(
-  _event: EventRecord,
+  event: EventRecord,
   changed: boolean,
 ): EventReplyOptions {
   return {
-    content: changed ? "✅ RSVP confirmed." : "✅ You’re already RSVP’d.",
+    content: withTestNote(
+      event,
+      changed ? "✅ RSVP confirmed." : "✅ You’re already RSVP’d.",
+    ),
     embeds: [],
     components: [],
   };
@@ -321,12 +372,14 @@ export function buildTicketCheckout(
     .setURL(checkoutUrl)
     .setStyle(ButtonStyle.Link);
   return {
-    content:
+    content: withTestNote(
+      event,
       `A ticket for **${event.title}** is reserved for about 30 minutes.\n\n` +
-      `Price: **${formatTicketPrice(event)}**\n` +
-      (event.test_mode
-        ? "🧪 Test mode: use a Stripe test card. No real money will be charged."
-        : "Stripe will collect payment and email your receipt."),
+        `Price: **${formatTicketPrice(event)}**\n` +
+        (event.test_mode
+          ? "Use a Stripe test card such as 4242 4242 4242 4242."
+          : "Stripe will collect payment and email your receipt."),
+    ),
     embeds: [],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(checkout)],
   };
@@ -334,39 +387,34 @@ export function buildTicketCheckout(
 
 export function buildTicketConfirmed(event: EventRecord): EventReplyOptions {
   return {
-    content: event.test_mode
-      ? `✅ Your test ticket for **${event.title}** is confirmed. No real payment was made.`
-      : `✅ Your paid ticket for **${event.title}** is confirmed. Stripe has emailed your receipt.`,
+    content: withTestNote(
+      event,
+      `✅ Your ticket for **${event.title}** is confirmed.` +
+        (event.test_mode ? "" : " Stripe has emailed your receipt."),
+    ),
     embeds: [],
     components: [],
   };
 }
 
 export function buildCancellationComplete(
-  _event: EventRecord,
+  event: EventRecord,
   changed: boolean,
 ): EventReplyOptions {
   return {
-    content: changed ? "Your RSVP has been cancelled." : "You don’t have an active RSVP.",
+    content: withTestNote(
+      event,
+      changed ? "Your RSVP has been cancelled." : "You don’t have an active RSVP.",
+    ),
     embeds: [],
     components: [],
   };
 }
 
 export function buildEventAnnouncementText(event: EventRecord): string {
-  let text = event.test_mode
-    ? "## 🧪 TEST EVENT — NO REAL MONEY WILL BE CHARGED\n\n"
-    : "";
-  text += `# ${event.title}\n\n`;
-  if (typeof event.starts_at === "number") {
-    text += `📅 **Starts:** <t:${event.starts_at}:F> (<t:${event.starts_at}:R>)\n`;
-    if (typeof event.ends_at === "number") {
-      text += `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
-    }
-  } else {
-    text += `📅 **${event.schedule_text}**\n`;
-  }
-  text += `📍 **${event.location}**\n\n${event.announcement}`;
+  let text = `# ${event.title}\n\n`;
+  text += scheduleBlock(event, true);
+  text += `${locationLine(event)}\n\n${event.announcement}`;
 
   if (event.ticket_price_cents && event.ticket_currency) {
     text += `\n\n🎟️ **Tickets: ${formatTicketPrice(event)}**`;
@@ -389,7 +437,7 @@ export function buildEventAnnouncementText(event: EventRecord): string {
     }
   }
 
-  return text;
+  return withTestNote(event, text);
 }
 
 function buildCompactRsvpText(
@@ -397,16 +445,11 @@ function buildCompactRsvpText(
   heading: string,
   message: string,
 ): string {
-  let schedule: string;
-  if (typeof event.starts_at === "number") {
-    schedule = `📅 **Starts:** <t:${event.starts_at}:F>\n`;
-    if (typeof event.ends_at === "number") {
-      schedule += `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
-    }
-  } else {
-    schedule = `📅 **${event.schedule_text}**\n`;
-  }
-  return `**${heading}**\n\n${schedule}📍 **${event.location}**\n\n${message}`;
+  const schedule = scheduleBlock(event, false);
+  return withTestNote(
+    event,
+    `**${heading}**\n\n${schedule}${locationLine(event)}\n\n${message}`,
+  );
 }
 
 function admissionClosed(event: EventRecord, now: number): boolean {

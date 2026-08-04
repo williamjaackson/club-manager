@@ -54,6 +54,7 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         starts_at: schedule.startsAt,
         ends_at: schedule.endsAt ?? null,
         ticket_sales_close_at: schedule.ticketSalesCloseAt ?? null,
+        location_url: schedule.locationUrl ?? null,
       });
       return true;
     },
@@ -170,6 +171,7 @@ test("creates a paid multi-day test event through the persistent wizard", async 
     "event-starts-at": "2099-08-08 10:00",
     "event-ends-at": "2099-08-10 17:00",
     "event-ticket-sales-close-at": "2099-08-07 17:00",
+    "event-location-url": "https://maps.app.goo.gl/club123",
   };
   await controller.handleModal({
     ...baseInteraction,
@@ -212,6 +214,7 @@ test("creates a paid multi-day test event through the persistent wizard", async 
 
   assert.equal(pending, undefined);
   assert.equal(createdDraft.ticketPriceCents, 1250);
+  assert.equal(createdDraft.locationUrl, "https://maps.app.goo.gl/club123");
   assert.equal(createdDraft.ticketLimit, 50);
   assert.equal(createdDraft.testMode, true);
   assert.ok(createdDraft.endsAt > createdDraft.startsAt);
