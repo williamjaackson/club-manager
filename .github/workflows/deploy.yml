@@ -45,6 +45,7 @@ jobs:
         env:
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
           VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT }}
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -53,16 +54,24 @@ jobs:
             echo "${{ secrets.VPS_SSH_KEY }}" > /tmp/deploy_key
             chmod 600 /tmp/deploy_key
             trap 'rm -f /tmp/deploy_key' EXIT
+            # The provider's edge protection rate-limits port 22 from cloud
+            # IP ranges; deploys use an alternate sshd port when configured.
+            PORT="${VPS_SSH_PORT:-22}"
             # Pin the host key when VPS_KNOWN_HOSTS is set (see
             # scripts/setup-deploy-user.sh); otherwise trust on first use.
             if [ -n "$VPS_KNOWN_HOSTS" ]; then
               mkdir -p ~/.ssh
-              echo "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+              if [ "$PORT" = "22" ]; then
+                echo "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+              else
+                # known_hosts entries for non-default ports use [host]:port
+                echo "$VPS_KNOWN_HOSTS" | sed -E "s/^([^ ,[]+)/[\1]:$PORT/" > ~/.ssh/known_hosts
+              fi
               HOST_KEY_OPT="-o StrictHostKeyChecking=yes"
             else
               HOST_KEY_OPT="-o StrictHostKeyChecking=accept-new"
             fi
-            ssh $HOST_KEY_OPT -o ConnectTimeout=30 -i /tmp/deploy_key \
+            ssh $HOST_KEY_OPT -o ConnectTimeout=30 -p "$PORT" -i /tmp/deploy_key \
               "${VPS_SSH_USER:-root}@${{ secrets.VPS_HOST }}" '
               cd /opt/club-manager
               git fetch origin main

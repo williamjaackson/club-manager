@@ -272,6 +272,14 @@ every pull request and again before every deploy.
 Deploys run from GitHub Actions over SSH. Run
 `./scripts/setup-deploy-user.sh` once to create a dedicated `deploy` user on
 the VPS, pin its host key, and rotate the Actions secrets away from root.
+If the hosting provider's edge protection rate-limits port 22 from cloud IP
+ranges (GitHub runners time out while other clients connect fine), add an
+alternate sshd port on the VPS and set the `VPS_SSH_PORT` secret:
+
+```sh
+printf "Port 22\nPort 2222\n" > /etc/ssh/sshd_config.d/10-ci-port.conf
+sshd -t && systemctl restart ssh
+```
 
 Or use the development service:
 

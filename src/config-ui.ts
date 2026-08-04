@@ -29,6 +29,7 @@ export function buildConfigModal(current: ResolvedGuildSettings): ModalBuilder {
 
   const connectedRole = new RoleSelectMenuBuilder()
     .setCustomId(configIds.connectedRole)
+    .setRequired(false)
     .setMinValues(0)
     .setMaxValues(1);
   if (current.connectedRoleId) {
@@ -37,6 +38,7 @@ export function buildConfigModal(current: ResolvedGuildSettings): ModalBuilder {
 
   const exemptRole = new RoleSelectMenuBuilder()
     .setCustomId(configIds.exemptRole)
+    .setRequired(false)
     .setMinValues(0)
     .setMaxValues(1);
   if (current.exemptRoleId) {
