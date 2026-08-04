@@ -47,7 +47,8 @@ Stripe's signed webhook is the source of truth for payment fulfillment. The
 success redirect never creates a ticket. Checkout creation and webhook
 fulfillment are both idempotent, and a short webhook grace period prevents an
 expiring reservation from reallocating capacity before a delayed webhook is
-processed.
+processed. A full Stripe refund automatically revokes the ticket and releases
+its capacity; a partial refund leaves the ticket valid.
 
 Confirmations and cancellations are idempotent: repeated button presses do not
 create duplicate history or audit messages.
@@ -110,8 +111,8 @@ Use test-mode keys until the complete purchase flow has been verified.
    `127.0.0.1:3001` through HTTPS.
 3. Add a Stripe webhook endpoint at
    `https://your-public-host/stripe/webhook`.
-4. Subscribe it to `checkout.session.completed` and
-   `checkout.session.async_payment_succeeded`.
+4. Subscribe it to `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded`, and `charge.refunded`.
 5. Put that endpoint's `whsec_...` signing secret in
    `STRIPE_WEBHOOK_SECRET`.
 
@@ -125,10 +126,9 @@ Use the signing secret printed by `stripe listen` and Stripe's test card
 `4242 4242 4242 4242`. The Checkout success and cancel pages are also served
 by the bot under `/stripe/`.
 
-Stripe Dashboard settings control the enabled payment methods. Tax treatment,
-refund policy, and automatic ticket revocation after a Dashboard refund still
-need to be configured for the club's operational requirements before live-mode
-sales.
+Stripe Dashboard settings control the enabled payment methods. Tax treatment
+and the club's refund policy still need to be configured for its operational
+requirements.
 
 ## Run with Docker Compose
 

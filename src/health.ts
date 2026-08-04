@@ -71,6 +71,8 @@ export function createHttpServer(
       const message =
         status === "paid"
           ? "Your ticket is confirmed."
+          : status === "refunded"
+            ? "This ticket was refunded and is no longer valid."
           : "Payment received. Your ticket is being confirmed.";
       html(response, 200, "Ticket checkout", message);
       return;
