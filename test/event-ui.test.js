@@ -6,6 +6,7 @@ import {
   buildCurrentRsvp,
   buildEventPreview,
   buildPublicEventMessage,
+  buildReminderMessage,
   buildRsvpPrompt,
   buildTicketCheckout,
 } from "../dist/event-ui.js";
@@ -32,13 +33,12 @@ test("serializes every event-creation modal field", () => {
   const modal = buildCreateEventModal("regression-test").toJSON();
 
   assert.equal(modal.custom_id, "event:create:regression-test");
-  assert.equal(modal.components.length, 5);
+  assert.equal(modal.components.length, 4);
   assert.deepEqual(
     modal.components.map(({ label }) => label),
     [
       "Announcement channel",
       "Event name",
-      "Date and time",
       "Location",
       "Announcement",
     ],
@@ -48,7 +48,6 @@ test("serializes every event-creation modal field", () => {
     [
       "event-channel",
       "event-title",
-      "event-schedule",
       "event-location",
       "event-announcement",
     ],
@@ -158,6 +157,45 @@ test("clearly labels Stripe test-mode events and checkout", () => {
   assert.equal(publicButton?.label, "Test checkout — A$12.50");
   assert.match(checkout.content ?? "", /No real money will be charged/i);
   assert.equal(checkoutButton?.label, "Open Stripe test checkout");
+});
+
+test("shows structured event and ticket closing times", () => {
+  const timedEvent = {
+    ...event,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 50,
+    starts_at: 2_000,
+    ends_at: 3_000,
+    ticket_sales_close_at: 2_500,
+  };
+  const publicMessage = buildPublicEventMessage(timedEvent);
+  const freeMessage = buildPublicEventMessage({
+    ...event,
+    ticket_price_cents: null,
+    ticket_currency: null,
+    starts_at: 2_000,
+    ends_at: 3_000,
+  });
+  const reminder = buildReminderMessage(
+    timedEvent,
+    "@everyone Reminder",
+    2_600,
+  );
+  const reminderButton = reminder.components?.[0]?.components[0]?.toJSON();
+
+  assert.match(publicMessage.content ?? "", /<t:2000:F>/);
+  assert.match(publicMessage.content ?? "", /<t:3000:F>/);
+  assert.match(publicMessage.content ?? "", /Ticket sales close.*<t:2500:F>/s);
+  assert.match(freeMessage.content ?? "", /RSVPs close.*<t:3000:F>/s);
+  assert.equal(reminder.content, "@everyone Reminder");
+  assert.deepEqual(reminder.allowedMentions?.parse, [
+    "everyone",
+    "roles",
+    "users",
+  ]);
+  assert.equal(reminderButton?.custom_id, `event:buy:${event.id}`);
+  assert.equal(reminderButton?.disabled, true);
 });
 
 test("uses plain message text throughout the event flow", () => {

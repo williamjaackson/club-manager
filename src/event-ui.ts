@@ -25,7 +25,6 @@ export type EventReplyOptions = Pick<
 export const eventIds = {
   channel: "event-channel",
   title: "event-title",
-  schedule: "event-schedule",
   location: "event-location",
   announcement: "event-announcement",
 } as const;
@@ -41,12 +40,6 @@ export function buildCreateEventModal(token: string): ModalBuilder {
     .setStyle(TextInputStyle.Short)
     .setPlaceholder("Griffith AI-Hackathon 2026")
     .setMaxLength(100)
-    .setRequired(true);
-  const schedule = new TextInputBuilder()
-    .setCustomId(eventIds.schedule)
-    .setStyle(TextInputStyle.Short)
-    .setPlaceholder("Saturday 1 August 2026, 10:00 am–5:00 pm")
-    .setMaxLength(200)
     .setRequired(true);
   const location = new TextInputBuilder()
     .setCustomId(eventIds.location)
@@ -72,9 +65,6 @@ export function buildCreateEventModal(token: string): ModalBuilder {
         .setDescription("The event will be posted here after preview.")
         .setChannelSelectMenuComponent(channel),
       new LabelBuilder().setLabel("Event name").setTextInputComponent(title),
-      new LabelBuilder()
-        .setLabel("Date and time")
-        .setTextInputComponent(schedule),
       new LabelBuilder().setLabel("Location").setTextInputComponent(location),
       new LabelBuilder()
         .setLabel("Announcement")
@@ -118,6 +108,37 @@ export function buildEventPreview(
 export function buildPublicEventMessage(
   event: EventRecord,
 ): MessageCreateOptions {
+  const files: AttachmentBuilder[] = [];
+
+  if (event.artwork_url && event.artwork_name) {
+    files.push(
+      new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }),
+    );
+  }
+
+  return {
+    content: buildAnnouncementText(event),
+    components: [buildAdmissionRow(event)],
+    files,
+  };
+}
+
+export function buildReminderMessage(
+  event: EventRecord,
+  content: string,
+  now = Math.floor(Date.now() / 1000),
+): MessageCreateOptions {
+  return {
+    content,
+    components: [buildAdmissionRow(event, admissionClosed(event, now))],
+    allowedMentions: { parse: ["everyone", "roles", "users"] },
+  };
+}
+
+function buildAdmissionRow(
+  event: EventRecord,
+  disabled = false,
+): ActionRowBuilder<ButtonBuilder> {
   const admission = event.ticket_price_cents && event.ticket_currency
     ? new ButtonBuilder()
         .setCustomId(`event:buy:${event.id}`)
@@ -133,21 +154,8 @@ export function buildPublicEventMessage(
         .setLabel("RSVP")
         .setEmoji("🎟️")
         .setStyle(ButtonStyle.Secondary);
-  const files: AttachmentBuilder[] = [];
-
-  if (event.artwork_url && event.artwork_name) {
-    files.push(
-      new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }),
-    );
-  }
-
-  return {
-    content: buildAnnouncementText(event),
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(admission),
-    ],
-    files,
-  };
+  admission.setDisabled(disabled);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(admission);
 }
 
 export function buildRsvpPrompt(event: EventRecord): EventReplyOptions {
@@ -255,17 +263,30 @@ function buildAnnouncementText(event: EventRecord): string {
   let text = event.test_mode
     ? "## 🧪 TEST EVENT — NO REAL MONEY WILL BE CHARGED\n\n"
     : "";
-  text +=
-    `# ${event.title}\n\n` +
-    `📅 **${event.schedule_text}**\n` +
-    `📍 **${event.location}**\n\n` +
-    event.announcement;
+  text += `# ${event.title}\n\n`;
+  if (
+    typeof event.starts_at === "number" &&
+    typeof event.ends_at === "number"
+  ) {
+    text +=
+      `📅 **Starts:** <t:${event.starts_at}:F> (<t:${event.starts_at}:R>)\n` +
+      `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
+  } else {
+    text += `📅 **${event.schedule_text}**\n`;
+  }
+  text += `📍 **${event.location}**\n\n${event.announcement}`;
 
   if (event.ticket_price_cents && event.ticket_currency) {
     text += `\n\n🎟️ **Tickets: ${formatTicketPrice(event)}**`;
     if (event.ticket_limit !== null) {
       text += ` · ${event.ticket_limit}-ticket capacity`;
     }
+    const salesClose = event.ticket_sales_close_at ?? event.ends_at;
+    if (typeof salesClose === "number") {
+      text += `\n⏳ **Ticket sales close:** <t:${salesClose}:F> (<t:${salesClose}:R>)`;
+    }
+  } else if (typeof event.ends_at === "number") {
+    text += `\n\n⏳ **RSVPs close:** <t:${event.ends_at}:F> (<t:${event.ends_at}:R>)`;
   }
 
   return text;
@@ -276,11 +297,25 @@ function buildCompactRsvpText(
   heading: string,
   message: string,
 ): string {
+  const schedule =
+    typeof event.starts_at === "number" && typeof event.ends_at === "number"
+      ? `📅 **Starts:** <t:${event.starts_at}:F>\n` +
+        `🏁 **Finishes:** <t:${event.ends_at}:F>\n`
+      : `📅 **${event.schedule_text}**\n`;
   return (
     `**${heading}**\n\n` +
-    `📅 **${event.schedule_text}**\n` +
+    schedule +
     `📍 **${event.location}**\n\n` +
     message
+  );
+}
+
+function admissionClosed(event: EventRecord, now: number): boolean {
+  if (typeof event.ends_at === "number" && event.ends_at <= now) return true;
+  return (
+    typeof event.ticket_price_cents === "number" &&
+    typeof event.ticket_sales_close_at === "number" &&
+    event.ticket_sales_close_at <= now
   );
 }
 

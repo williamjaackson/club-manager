@@ -16,16 +16,20 @@ RSVP changes are also mirrored to a private audit channel.
 Run:
 
 ```text
-/event create artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity> test_event:<optional boolean>
+/event create start_time:<YYYY-MM-DD HH:mm> finish_time:<YYYY-MM-DD HH:mm> artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity> test_event:<optional boolean> ticket_close_time:<optional YYYY-MM-DD HH:mm>
 ```
 
-The modal collects the announcement channel, event name, schedule, location,
-and complete announcement. The resulting preview is visible only to the
-administrator and must be explicitly published or discarded.
+Times are entered in Brisbane time. The modal collects the announcement
+channel, event name, location, and complete announcement. The resulting preview
+is visible only to the administrator and must be explicitly published or
+discarded. Published times use Discord timestamps, which each member sees in
+their own local time.
 
 Omit `ticket_price` for an RSVP-only event. When it is present, the event post
 shows the price and a **Buy ticket** button. `ticket_limit` is optional, but can
 only be used with a ticket price. Ticket prices currently use AUD.
+`ticket_close_time` can close paid sales before the event finishes and can only
+be used with a ticket price. Without it, ticket sales close at finish time.
 
 Set `test_event:true` with a ticket price to exercise the complete Stripe
 sandbox Checkout and ticket-fulfillment flow. Test events are clearly labelled
@@ -34,6 +38,11 @@ and never use the primary Stripe key or charge real money.
 The command is hidden from non-administrators by its Discord command
 permissions. Every create, publish, and discard interaction also checks the
 member's `Administrator` permission at runtime.
+
+Run `/reminder announcement:<event message link> message:<your text>` to reply
+to a published announcement. The reminder supports mentions such as `@everyone`
+and repeats the event's trusted RSVP or ticket button. Closed admission buttons
+are shown disabled.
 
 ### Members
 
@@ -44,6 +53,11 @@ approximately 30-minute reservation and links the member to Stripe-hosted
 Checkout. One Discord member can hold one paid ticket for an event. Selecting
 the button after purchase shows the existing ticket confirmation instead of
 charging again.
+
+RSVP interactions stop at the event finish time. New ticket Checkout links stop
+at the optional ticket close time, or at finish time when no earlier close is
+set. The controller and database both enforce these deadlines, including for
+buttons copied onto reminders.
 
 Stripe's signed webhook is the source of truth for payment fulfillment. The
 success redirect never creates a ticket. Checkout creation and webhook
@@ -63,6 +77,9 @@ Each real state change creates an immutable audit message:
 @member RSVP’d for Event Name.
 @member cancelled their RSVP for Event Name.
 ```
+
+The first RSVP or ticket-button click by each member also logs that they showed
+interest, even if they do not verify, confirm, or finish Checkout.
 
 The message also links to the original announcement. Neon is the source of
 truth. An outbox retries audit messages when Discord or the configured channel
@@ -97,9 +114,11 @@ The bot requires these permissions in announcement and audit channels:
 
 - View Channel
 - Send Messages
+- Read Message History
 - Embed Links
 - Attach Files
 - Manage Webhooks (announcement channels only)
+- Mention Everyone (only when `/reminder` should ping `@everyone`)
 
 Published announcements are sent through a bot-owned webhook using the
 publishing administrator's server display name and profile picture. The bot
@@ -183,8 +202,11 @@ docker compose --profile dev run --rm bot-dev
 The Neon PostgreSQL database contains:
 
 - Event drafts and published message references
+- Structured start, finish, and optional ticket-close times
 - Current RSVP state
 - Immutable RSVP/cancellation history
+- Idempotent RSVP and ticket interest records
+- Reminder message references for trusted copied buttons
 - Pending and delivered audit notifications
 - Open event-creation forms, with a 15-minute expiry
 - Ticket price and capacity on paid events

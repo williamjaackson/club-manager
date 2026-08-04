@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { newDb } from "pg-mem";
 import {
+  EventFinishedError,
   EventUnavailableError,
   setupDatabase,
   Store,
   TicketSoldOutError,
+  TicketSalesClosedError,
 } from "../dist/database.js";
 
 async function fixture(eventOverrides = {}) {
@@ -237,6 +239,149 @@ test("releases abandoned ticket capacity after the webhook grace period", async 
     );
 
     assert.equal(replacement.order.user_id, "62345678901234567");
+  } finally {
+    await context.close();
+  }
+});
+
+test("rejects responses after event and ticket deadlines", async () => {
+  const free = await fixture({ startsAt: 200, endsAt: 400 });
+  const paid = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+    startsAt: 200,
+    endsAt: 500,
+    ticketSalesCloseAt: 400,
+  });
+
+  try {
+    await free.store.claimEventForPublishing(free.event.id);
+    await free.store.finishPublishing(
+      free.event.id,
+      "42345678901234567",
+      250,
+    );
+    await paid.store.claimEventForPublishing(paid.event.id);
+    await paid.store.finishPublishing(
+      paid.event.id,
+      "52345678901234567",
+      250,
+    );
+
+    await assert.rejects(
+      free.store.confirmRsvp(
+        free.event.id,
+        "62345678901234567",
+        400,
+      ),
+      EventFinishedError,
+    );
+    await assert.rejects(
+      paid.store.reserveTicketCheckout(
+        paid.event.id,
+        "72345678901234567",
+        400,
+      ),
+      TicketSalesClosedError,
+    );
+  } finally {
+    await free.close();
+    await paid.close();
+  }
+});
+
+test("records admission interest exactly once per member and kind", async () => {
+  const context = await fixture();
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+
+    assert.equal(
+      await context.store.recordInterest(
+        context.event.id,
+        "52345678901234567",
+        "rsvp",
+        300,
+      ),
+      true,
+    );
+    assert.equal(
+      await context.store.recordInterest(
+        context.event.id,
+        "52345678901234567",
+        "rsvp",
+        301,
+      ),
+      false,
+    );
+    assert.equal(
+      await context.store.recordInterest(
+        context.event.id,
+        "52345678901234567",
+        "ticket",
+        302,
+      ),
+      true,
+    );
+    const audits = await context.store.getPendingAudit(400);
+    assert.deepEqual(
+      audits.map(({ action }) => action),
+      ["interest_rsvp", "interest_ticket"],
+    );
+  } finally {
+    await context.close();
+  }
+});
+
+test("recognizes original announcements and recorded reminder buttons", async () => {
+  const context = await fixture();
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+    await context.store.recordEventReminder(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+
+    assert.equal(
+      (await context.store.getEventByMessageId(
+        context.event.guild_id,
+        "42345678901234567",
+      ))?.id,
+      context.event.id,
+    );
+    assert.equal(
+      await context.store.isEventAdmissionMessage(
+        context.event.id,
+        "42345678901234567",
+      ),
+      true,
+    );
+    assert.equal(
+      await context.store.isEventAdmissionMessage(
+        context.event.id,
+        "52345678901234567",
+      ),
+      true,
+    );
+    assert.equal(
+      await context.store.isEventAdmissionMessage(
+        context.event.id,
+        "62345678901234567",
+      ),
+      false,
+    );
   } finally {
     await context.close();
   }
