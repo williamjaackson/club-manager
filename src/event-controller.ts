@@ -43,13 +43,13 @@ import {
   buildCurrentRsvp,
   buildEventAnnouncementText,
   buildEventPreview,
-  buildEventWizardContinue,
   buildPublicEventMessage,
   buildReminderMessage,
   buildRsvpComplete,
   buildRsvpPrompt,
   buildTicketCheckout,
   buildTicketConfirmed,
+  buildWizardHub,
   eventIds,
 } from "./event-ui.js";
 import type { ResolvedGuildSettings, SettingsManager } from "./settings.js";
@@ -247,7 +247,7 @@ export class EventController {
         await this.#saveEventSchedule(interaction, parsed.token);
         return true;
       case "admission":
-        await this.#finishEventWizard(interaction, parsed.token);
+        await this.#saveEventAdmission(interaction, parsed.token);
         return true;
     }
   }
@@ -285,11 +285,33 @@ export class EventController {
     await interaction.editReply({ content: describeSettings(saved), components: [] });
   }
 
+  // Wizard modals opened from the hub edit the hub message in place; the
+  // very first details modal (opened by /event create) creates it.
+  async #deferWizardModal(interaction: ModalSubmitInteraction): Promise<void> {
+    if (interaction.isFromMessage()) {
+      await interaction.deferUpdate();
+    } else {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    }
+  }
+
+  async #renderWizardHub(
+    interaction: ModalSubmitInteraction | ButtonInteraction,
+    token: string,
+  ): Promise<void> {
+    const pending = await this.#pendingEventWizard(interaction, token);
+    if (!pending) {
+      await this.#eventWizardExpired(interaction);
+      return;
+    }
+    await interaction.editReply(buildWizardHub(pending));
+  }
+
   async #saveEventDetails(
     interaction: ModalSubmitInteraction,
     token: string,
   ): Promise<void> {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.#deferWizardModal(interaction);
     const channels = interaction.fields.getSelectedChannels(eventIds.channel, true, [
       ChannelType.GuildText,
       ChannelType.GuildAnnouncement,
@@ -322,7 +344,7 @@ export class EventController {
       await this.#eventWizardExpired(interaction);
       return;
     }
-    await interaction.editReply(buildEventWizardContinue(token, "schedule"));
+    await this.#renderWizardHub(interaction, token);
   }
 
   async #saveEventSchedule(
@@ -365,7 +387,7 @@ export class EventController {
       throw new Error("Ticket sales close must be earlier than the finish time.");
     }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.#deferWizardModal(interaction);
     const saved = await this.#store.updatePendingEventSchedule(
       token,
       interaction.user.id,
@@ -381,10 +403,10 @@ export class EventController {
       await this.#eventWizardExpired(interaction);
       return;
     }
-    await interaction.editReply(buildEventWizardContinue(token, "admission"));
+    await this.#renderWizardHub(interaction, token);
   }
 
-  async #finishEventWizard(
+  async #saveEventAdmission(
     interaction: ModalSubmitInteraction,
     token: string,
   ): Promise<void> {
@@ -395,8 +417,32 @@ export class EventController {
       interaction.fields.getTextInputValue(eventIds.capacity),
     );
     const testMode = interaction.fields.getCheckbox(eventIds.testMode);
+    if (testMode && ticketPriceCents === undefined) {
+      throw new Error("Stripe test events require a paid ticket price.");
+    }
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await this.#deferWizardModal(interaction);
+    const saved = await this.#store.updatePendingEventAdmission(
+      token,
+      interaction.user.id,
+      interaction.guildId,
+      {
+        ...(ticketPriceCents !== undefined
+          ? { ticketPriceCents, ticketCurrency: "aud" }
+          : {}),
+        ...(capacity !== undefined ? { ticketLimit: capacity } : {}),
+        testMode,
+      },
+    );
+    if (!saved) {
+      await this.#eventWizardExpired(interaction);
+      return;
+    }
+    await this.#renderWizardHub(interaction, token);
+  }
+
+  async #finishEventWizard(interaction: ButtonInteraction, token: string): Promise<void> {
+    await interaction.deferUpdate();
     const pending = await this.#pendingEventWizard(interaction, token);
     if (!pending) {
       await this.#eventWizardExpired(interaction);
@@ -411,10 +457,10 @@ export class EventController {
     ) {
       throw new Error("Complete the event details and schedule steps first.");
     }
-    if (pending.ticket_sales_close_at !== null && ticketPriceCents === undefined) {
+    if (pending.ticket_sales_close_at !== null && pending.ticket_price_cents === null) {
       throw new Error("Ticket sales close requires a paid ticket price.");
     }
-    if (testMode && ticketPriceCents === undefined) {
+    if (pending.test_mode && pending.ticket_price_cents === null) {
       throw new Error("Stripe test events require a paid ticket price.");
     }
 
@@ -442,18 +488,27 @@ export class EventController {
     if (pending.location_url) draft.locationUrl = pending.location_url;
     if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
     if (pending.artwork_name) draft.artworkName = pending.artwork_name;
-    if (ticketPriceCents !== undefined) {
-      draft.ticketPriceCents = ticketPriceCents;
-      draft.ticketCurrency = "aud";
+    if (pending.ticket_price_cents !== null) {
+      draft.ticketPriceCents = pending.ticket_price_cents;
+      draft.ticketCurrency = pending.ticket_currency ?? "aud";
     }
-    if (capacity !== undefined) draft.ticketLimit = capacity;
-    if (testMode) draft.testMode = true;
+    if (pending.ticket_limit !== null) draft.ticketLimit = pending.ticket_limit;
+    if (pending.test_mode) draft.testMode = true;
     if (pending.ticket_sales_close_at !== null) {
       draft.ticketSalesCloseAt = pending.ticket_sales_close_at;
     }
 
     const event = await this.#store.createEventDraft(draft);
     await interaction.editReply(buildEventPreview(event));
+  }
+
+  async #abortEventWizard(interaction: ButtonInteraction, token: string): Promise<void> {
+    await interaction.deferUpdate();
+    await this.#store.deletePendingEventCreate(token);
+    await interaction.editReply({
+      content: "Event form discarded. Run `/event create` to start again.",
+      components: [],
+    });
   }
 
   async #pendingEventWizard(
@@ -530,9 +585,19 @@ export class EventController {
   }
 
   async handleButton(interaction: ButtonInteraction): Promise<boolean> {
-    const wizard = parseEventWizardStep(interaction.customId);
-    if (wizard && wizard.step !== "details") {
+    const wizard = parseEventWizardAction(interaction.customId);
+    if (wizard) {
       this.#requireAdministrator(interaction);
+
+      if (wizard.action === "finish") {
+        await this.#finishEventWizard(interaction, wizard.token);
+        return true;
+      }
+      if (wizard.action === "abort") {
+        await this.#abortEventWizard(interaction, wizard.token);
+        return true;
+      }
+
       const pending = await this.#pendingEventWizard(interaction, wizard.token);
       if (!pending) {
         await interaction.reply({
@@ -542,9 +607,11 @@ export class EventController {
         return true;
       }
       await interaction.showModal(
-        wizard.step === "schedule"
-          ? buildCreateEventScheduleModal(wizard.token)
-          : buildCreateEventAdmissionModal(wizard.token),
+        wizard.action === "edit-details"
+          ? buildCreateEventDetailsModal(wizard.token, pending)
+          : wizard.action === "edit-schedule"
+            ? buildCreateEventScheduleModal(wizard.token, pending)
+            : buildCreateEventAdmissionModal(wizard.token, pending),
       );
       return true;
     }
@@ -943,6 +1010,24 @@ function parseEventButton(
   const eventId = Number(match[2]);
 
   return isEventButtonAction(action) ? { action, eventId } : undefined;
+}
+
+type WizardButtonAction =
+  | "edit-details"
+  | "edit-schedule"
+  | "edit-admission"
+  | "finish"
+  | "abort";
+
+function parseEventWizardAction(
+  customId: string,
+): { action: WizardButtonAction; token: string } | undefined {
+  const match =
+    /^event:create:(edit-details|edit-schedule|edit-admission|finish|abort):([a-f0-9]{32})$/.exec(
+      customId,
+    );
+  if (!match?.[1] || !match[2]) return undefined;
+  return { action: match[1] as WizardButtonAction, token: match[2] };
 }
 
 function parseEventWizardStep(

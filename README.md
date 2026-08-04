@@ -19,11 +19,15 @@ Run:
 /event create
 ```
 
-The command opens a persistent three-step Discord wizard. It collects event
-details and optional artwork, the schedule, then RSVP or ticket settings. A
-**Continue** button opens each successive form because Discord cannot open a
-modal directly from another modal submission. The resulting preview is visible
-only to the administrator and must be explicitly published or discarded.
+The command opens the event details form, then a persistent private **draft
+panel** that previews the event as it takes shape. Edit any section — details,
+schedule, or admission — in any order through its button; each form is
+pre-filled with the current values, and parsed times are echoed back
+immediately so typos are caught before publishing. **Create draft** (enabled
+once the details and start time exist) produces the final preview, which must
+be explicitly published or discarded; **Discard form** abandons the draft.
+The panel edits itself in place, so the wizard never stacks messages. Forms
+survive bot restarts and expire after 15 minutes of inactivity.
 
 Times are entered in Brisbane time. Start time is required, while finish time
 is optional and may be on a later date for a multi-day event. Published times

@@ -25,12 +25,17 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         announcement_channel_id: null,
         title: null,
         location: null,
+        location_url: null,
         announcement: null,
         artwork_url: null,
         artwork_name: null,
         starts_at: null,
         ends_at: null,
         ticket_sales_close_at: null,
+        ticket_price_cents: null,
+        ticket_currency: null,
+        ticket_limit: null,
+        test_mode: false,
       };
     },
     async getPendingEventCreate() {
@@ -55,6 +60,16 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         ends_at: schedule.endsAt ?? null,
         ticket_sales_close_at: schedule.ticketSalesCloseAt ?? null,
         location_url: schedule.locationUrl ?? null,
+      });
+      return true;
+    },
+    async updatePendingEventAdmission(token, owner, guild, admission) {
+      assert.deepEqual([token, owner, guild], [pending.token, userId, guildId]);
+      Object.assign(pending, {
+        ticket_price_cents: admission.ticketPriceCents ?? null,
+        ticket_currency: admission.ticketCurrency ?? null,
+        ticket_limit: admission.ticketLimit ?? null,
+        test_mode: admission.testMode,
       });
       return true;
     },
@@ -151,6 +166,9 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         return details[id];
       },
     },
+    isFromMessage() {
+      return false;
+    },
     async deferReply(options) {
       assert.equal(options.flags, MessageFlags.Ephemeral);
     },
@@ -159,10 +177,20 @@ test("creates a paid multi-day test event through the persistent wizard", async 
     },
   });
 
-  const scheduleButton = response.components[0].components[0].toJSON().custom_id;
+  const hubButtons = response.components.map((row) =>
+    row.components.map((button) => button.toJSON()),
+  );
+  assert.deepEqual(
+    hubButtons[0].map(({ custom_id }) => custom_id.split(":")[2]),
+    ["edit-details", "edit-schedule", "edit-admission"],
+  );
+  assert.equal(hubButtons[1][0].custom_id.split(":")[2], "finish");
+  assert.equal(hubButtons[1][0].disabled, true, "finish disabled until schedule set");
+  assert.match(response.content, /Test event/);
+
   await controller.handleButton({
     ...baseInteraction,
-    customId: scheduleButton,
+    customId: hubButtons[0][1].custom_id,
     async showModal(value) {
       modal = value.toJSON();
     },
@@ -181,16 +209,26 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         return schedule[id];
       },
     },
-    async deferReply() {},
+    isFromMessage() {
+      return true;
+    },
+    async deferUpdate() {},
     async editReply(options) {
       response = options;
     },
   });
 
-  const admissionButton = response.components[0].components[0].toJSON().custom_id;
+  // The hub echoes the parsed schedule back before anything is created.
+  assert.match(response.content, new RegExp(`<t:${pending.starts_at}:F>`));
+  assert.equal(
+    response.components[1].components[0].toJSON().disabled,
+    false,
+    "finish enabled once required fields exist",
+  );
+
   await controller.handleButton({
     ...baseInteraction,
-    customId: admissionButton,
+    customId: response.components[0].components[2].toJSON().custom_id,
     async showModal(value) {
       modal = value.toJSON();
     },
@@ -206,7 +244,19 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         return true;
       },
     },
-    async deferReply() {},
+    isFromMessage() {
+      return true;
+    },
+    async deferUpdate() {},
+    async editReply(options) {
+      response = options;
+    },
+  });
+
+  await controller.handleButton({
+    ...baseInteraction,
+    customId: response.components[1].components[0].toJSON().custom_id,
+    async deferUpdate() {},
     async editReply(options) {
       response = options;
     },
