@@ -6,6 +6,7 @@ import {
   type Interaction,
   type InteractionReplyOptions,
 } from "discord.js";
+import Stripe from "stripe";
 import { AuditLogger } from "./audit.js";
 import { commandDefinitions } from "./commands.js";
 import { config } from "./config.js";
@@ -16,7 +17,8 @@ import {
   Store,
 } from "./database.js";
 import { EventController } from "./event-controller.js";
-import { startHealthServer } from "./health.js";
+import { startHttpServer } from "./health.js";
+import { TicketingService } from "./ticketing.js";
 
 await initializeDatabase(config.databaseUrl);
 const databasePool = createDatabasePool(config.databaseUrl);
@@ -25,8 +27,15 @@ const client = new Client({
 });
 const store = new Store(databasePool);
 const audit = new AuditLogger(client, store, config.rsvpLogChannelId);
-const eventController = new EventController(store, audit);
-const healthServer = startHealthServer(client, config.healthPort);
+const stripe = new Stripe(config.stripeSecretKey);
+const ticketing = new TicketingService(
+  stripe,
+  store,
+  config.publicBaseUrl,
+  config.stripeWebhookSecret,
+);
+const eventController = new EventController(store, audit, ticketing);
+const httpServer = startHttpServer(client, ticketing, config.healthPort);
 let shuttingDown = false;
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -123,7 +132,7 @@ async function shutdown(signal: string): Promise<void> {
 
   console.log(`${signal} received; shutting down`);
   audit.stop();
-  healthServer.close();
+  httpServer.close();
   client.destroy();
   await store.close();
 }

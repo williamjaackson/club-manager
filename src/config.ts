@@ -28,11 +28,24 @@ function snowflake(name: string, fallback?: string): string {
   return value;
 }
 
+function publicUrl(value: string): string {
+  const parsed = new URL(value);
+
+  if (!(["http:", "https:"] as string[]).includes(parsed.protocol)) {
+    throw new Error("PUBLIC_BASE_URL must use http or https");
+  }
+
+  return parsed.toString().replace(/\/$/, "");
+}
+
 export const config = {
   token: required("DISCORD_TOKEN"),
   guildId: process.env.DISCORD_GUILD_ID?.trim() || undefined,
   healthPort: port(process.env.HEALTH_PORT),
   databaseUrl: required("DATABASE_URL"),
+  publicBaseUrl: publicUrl(required("PUBLIC_BASE_URL")),
+  stripeSecretKey: required("STRIPE_SECRET_KEY"),
+  stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
   rsvpLogChannelId: snowflake(
     "RSVP_LOG_CHANNEL_ID",
     "1530755171645132921",

@@ -21,6 +21,22 @@ export const commandDefinitions = [
             .setName("artwork")
             .setDescription("Optional image shown below the announcement")
             .setRequired(false),
+        )
+        .addNumberOption((option) =>
+          option
+            .setName("ticket_price")
+            .setDescription("AUD ticket price; omit for an RSVP-only event")
+            .setMinValue(0.5)
+            .setMaxValue(100_000)
+            .setRequired(false),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName("ticket_limit")
+            .setDescription("Maximum paid tickets; omit for unlimited")
+            .setMinValue(1)
+            .setMaxValue(100_000)
+            .setRequired(false),
         ),
     )
     .toJSON(),

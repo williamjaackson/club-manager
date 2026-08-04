@@ -8,6 +8,9 @@ services:
     restart: unless-stopped
     init: true
     stop_grace_period: 10s
+    ports:
+      # nginx proxies only /stripe/ to this loopback-only listener.
+      - "127.0.0.1:3001:${HEALTH_PORT:-3000}"
     read_only: true
     tmpfs:
       - /tmp

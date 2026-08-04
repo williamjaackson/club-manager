@@ -84,6 +84,12 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
           url: event.artwork_url,
         };
       },
+      getNumber() {
+        return null;
+      },
+      getInteger() {
+        return null;
+      },
     },
     async showModal(value) {
       modal = value.toJSON();
@@ -277,6 +283,9 @@ function eventDraft(id) {
     announcement: "Test.",
     artwork_url: null,
     artwork_name: null,
+    ticket_price_cents: null,
+    ticket_currency: null,
+    ticket_limit: null,
     status: "draft",
     created_at: 100,
     published_at: null,
@@ -307,3 +316,65 @@ function publishInteraction(event, channel, editReply) {
     async editReply(options) { editReply(options); },
   };
 }
+
+test("opens Stripe Checkout privately for an eligible paid-event member", async () => {
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "42345678901234567",
+    creator_id: "32345678901234567",
+    title: "Paid test event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 50,
+    status: "published",
+    created_at: 100,
+    published_at: 101,
+  };
+  let reply;
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+    },
+    {},
+    {
+      async startCheckout(receivedEvent, userId) {
+        assert.equal(receivedEvent, event);
+        assert.equal(userId, "52345678901234567");
+        return {
+          alreadyPaid: false,
+          order: { id: 7 },
+          checkoutUrl: "https://checkout.stripe.com/test",
+        };
+      },
+    },
+  );
+
+  await controller.handleButton({
+    customId: `event:buy:${event.id}`,
+    guildId: event.guild_id,
+    user: { id: "52345678901234567" },
+    message: { id: event.message_id },
+    member: { roles: ["1257896371973914674"] },
+    async deferReply(options) {
+      assert.equal(options.flags, MessageFlags.Ephemeral);
+    },
+    async editReply(options) {
+      reply = options;
+    },
+  });
+
+  assert.match(reply.content, /reserved for about 30 minutes/);
+  assert.equal(
+    reply.components[0].components[0].toJSON().url,
+    "https://checkout.stripe.com/test",
+  );
+});
