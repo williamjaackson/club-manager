@@ -13,7 +13,12 @@ export type EventStatus =
   | "published"
   | "discarded";
 export type RsvpStatus = "active" | "cancelled";
-export type AuditAction = "rsvp" | "cancel";
+export type AuditAction =
+  | "interest_rsvp"
+  | "interest_ticket"
+  | "rsvp"
+  | "cancel";
+export type InterestKind = "rsvp" | "ticket";
 export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
 export interface EventRecord {
@@ -32,6 +37,9 @@ export interface EventRecord {
   ticket_currency: string | null;
   ticket_limit: number | null;
   test_mode: boolean;
+  starts_at: number | null;
+  ends_at: number | null;
+  ticket_sales_close_at: number | null;
   status: EventStatus;
   created_at: number;
   published_at: number | null;
@@ -51,6 +59,9 @@ export interface NewEventDraft {
   ticketCurrency?: string;
   ticketLimit?: number;
   testMode?: boolean;
+  startsAt?: number;
+  endsAt?: number;
+  ticketSalesCloseAt?: number;
 }
 
 export interface PendingEventCreateRecord {
@@ -63,6 +74,9 @@ export interface PendingEventCreateRecord {
   ticket_currency: string | null;
   ticket_limit: number | null;
   test_mode: boolean;
+  starts_at: number | null;
+  ends_at: number | null;
+  ticket_sales_close_at: number | null;
   created_at: number;
   expires_at: number;
 }
@@ -77,6 +91,9 @@ export interface NewPendingEventCreate {
   ticketCurrency?: string;
   ticketLimit?: number;
   testMode?: boolean;
+  startsAt?: number;
+  endsAt?: number;
+  ticketSalesCloseAt?: number;
 }
 
 export interface TicketOrderRecord {
@@ -137,6 +154,20 @@ export class TicketSoldOutError extends Error {
   }
 }
 
+export class EventFinishedError extends Error {
+  constructor() {
+    super("This event has finished and is no longer accepting responses.");
+    this.name = "EventFinishedError";
+  }
+}
+
+export class TicketSalesClosedError extends Error {
+  constructor() {
+    super("Ticket sales for this event are closed.");
+    this.name = "TicketSalesClosedError";
+  }
+}
+
 type Queryable = Pool | PoolClient;
 
 export function createDatabasePool(connectionString: string): Pool {
@@ -179,6 +210,9 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ticket_currency TEXT,
         ticket_limit INTEGER,
         test_mode BOOLEAN NOT NULL DEFAULT FALSE,
+        starts_at DOUBLE PRECISION,
+        ends_at DOUBLE PRECISION,
+        ticket_sales_close_at DOUBLE PRECISION,
         status TEXT NOT NULL DEFAULT 'draft'
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at DOUBLE PRECISION NOT NULL,
@@ -189,6 +223,9 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_currency TEXT;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS test_mode BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS starts_at DOUBLE PRECISION;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS ends_at DOUBLE PRECISION;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -200,6 +237,9 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ticket_currency TEXT,
         ticket_limit INTEGER,
         test_mode BOOLEAN NOT NULL DEFAULT FALSE,
+        starts_at DOUBLE PRECISION,
+        ends_at DOUBLE PRECISION,
+        ticket_sales_close_at DOUBLE PRECISION,
         created_at DOUBLE PRECISION NOT NULL,
         expires_at DOUBLE PRECISION NOT NULL
       );
@@ -212,6 +252,10 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS test_mode BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS starts_at DOUBLE PRECISION;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS ends_at DOUBLE PRECISION;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
 
       CREATE TABLE IF NOT EXISTS ticket_orders (
         id SERIAL PRIMARY KEY,
@@ -267,17 +311,41 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         created_at DOUBLE PRECISION NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS event_interest (
+        event_id INTEGER NOT NULL REFERENCES events(id),
+        user_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('rsvp', 'ticket')),
+        created_at DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (event_id, user_id, kind)
+      );
+
+      CREATE TABLE IF NOT EXISTS event_reminders (
+        event_id INTEGER NOT NULL REFERENCES events(id),
+        message_id TEXT PRIMARY KEY,
+        created_at DOUBLE PRECISION NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS audit_outbox (
         id SERIAL PRIMARY KEY,
         event_id INTEGER NOT NULL REFERENCES events(id),
         user_id TEXT NOT NULL,
-        action TEXT NOT NULL CHECK (action IN ('rsvp', 'cancel')),
+        action TEXT NOT NULL CONSTRAINT audit_outbox_action_check
+          CHECK (action IN (
+            'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel'
+          )),
         created_at DOUBLE PRECISION NOT NULL,
         next_attempt_at DOUBLE PRECISION NOT NULL,
         attempt_count INTEGER NOT NULL DEFAULT 0,
         sent_at DOUBLE PRECISION,
         last_error TEXT
       );
+
+      ALTER TABLE audit_outbox
+        DROP CONSTRAINT IF EXISTS audit_outbox_action_check;
+      ALTER TABLE audit_outbox ADD CONSTRAINT audit_outbox_action_check
+        CHECK (action IN (
+          'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel'
+        ));
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
         ON audit_outbox (sent_at, next_attempt_at, id);
@@ -334,8 +402,14 @@ export class Store {
           ticket_currency,
           ticket_limit,
           test_mode,
+          starts_at,
+          ends_at,
+          ticket_sales_close_at,
           created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15, $16, $17
+        )
         RETURNING *
       `,
       [
@@ -352,6 +426,9 @@ export class Store {
         draft.ticketCurrency ?? null,
         draft.ticketLimit ?? null,
         draft.testMode ?? false,
+        draft.startsAt ?? null,
+        draft.endsAt ?? null,
+        draft.ticketSalesCloseAt ?? null,
         now,
       ],
     );
@@ -361,6 +438,109 @@ export class Store {
 
   async getEvent(id: number): Promise<EventRecord | undefined> {
     return this.#getEvent(this.#pool, id);
+  }
+
+  async getEventByMessageId(
+    guildId: string,
+    messageId: string,
+  ): Promise<EventRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM events WHERE guild_id = $1 AND message_id = $2",
+      [guildId, messageId],
+    );
+    return result.rows[0] as EventRecord | undefined;
+  }
+
+  async recordEventReminder(
+    eventId: number,
+    messageId: string,
+    now = currentTimestamp(),
+  ): Promise<void> {
+    await this.#pool.query(
+      `
+        INSERT INTO event_reminders (event_id, message_id, created_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (message_id) DO NOTHING
+      `,
+      [eventId, messageId, now],
+    );
+  }
+
+  async isEventAdmissionMessage(
+    eventId: number,
+    messageId: string,
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        SELECT 1 FROM events WHERE id = $1 AND message_id = $2
+        UNION ALL
+        SELECT 1 FROM event_reminders WHERE event_id = $1 AND message_id = $2
+        LIMIT 1
+      `,
+      [eventId, messageId],
+    );
+    return result.rows.length > 0;
+  }
+
+  async recordInterest(
+    eventId: number,
+    userId: string,
+    kind: InterestKind,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const event = await client.query(
+        "SELECT id FROM events WHERE id = $1 FOR UPDATE",
+        [eventId],
+      );
+      if (event.rows.length === 0) {
+        throw new Error("Event does not exist.");
+      }
+      const existing = await client.query(
+        `
+          SELECT 1 FROM event_interest
+          WHERE event_id = $1 AND user_id = $2 AND kind = $3
+        `,
+        [eventId, userId, kind],
+      );
+      if (existing.rows.length > 0) {
+        await client.query("COMMIT");
+        return false;
+      }
+
+      await client.query(
+        `
+          INSERT INTO event_interest (event_id, user_id, kind, created_at)
+          VALUES ($1, $2, $3, $4)
+        `,
+        [eventId, userId, kind, now],
+      );
+
+      await client.query(
+        `
+          INSERT INTO audit_outbox (
+            event_id, user_id, action, created_at, next_attempt_at
+          ) VALUES ($1, $2, $3, $4, $5)
+        `,
+        [
+          eventId,
+          userId,
+          kind === "rsvp" ? "interest_rsvp" : "interest_ticket",
+          now,
+          now,
+        ],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async createPendingEventCreate(
@@ -384,9 +564,15 @@ export class Store {
           ticket_currency,
           ticket_limit,
           test_mode,
+          starts_at,
+          ends_at,
+          ticket_sales_close_at,
           created_at,
           expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11, $12, $13, $14
+        )
       `,
       [
         pending.token,
@@ -398,6 +584,9 @@ export class Store {
         pending.ticketCurrency ?? null,
         pending.ticketLimit ?? null,
         pending.testMode ?? false,
+        pending.startsAt ?? null,
+        pending.endsAt ?? null,
+        pending.ticketSalesCloseAt ?? null,
         now,
         now + lifetimeSeconds,
       ],
@@ -579,6 +768,14 @@ export class Store {
         !event.ticket_currency
       ) {
         throw new EventUnavailableError();
+      }
+
+      if (
+        (event.ends_at !== null && event.ends_at <= now) ||
+        (event.ticket_sales_close_at !== null &&
+          event.ticket_sales_close_at <= now)
+      ) {
+        throw new TicketSalesClosedError();
       }
 
       const existingResult = await client.query(
@@ -865,11 +1062,17 @@ export class Store {
       // idempotency when Discord retries the same interaction concurrently.
       const event = await this.#getEvent(client, eventId, true);
 
+      if (!event || event.status !== "published") {
+        throw new EventUnavailableError();
+      }
       if (
-        !event ||
-        event.status !== "published" ||
-        (status === "active" && event.ticket_price_cents !== null)
+        status === "active" &&
+        event.ends_at !== null &&
+        event.ends_at <= now
       ) {
+        throw new EventFinishedError();
+      }
+      if (status === "active" && event.ticket_price_cents !== null) {
         throw new EventUnavailableError();
       }
 

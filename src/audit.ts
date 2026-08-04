@@ -72,10 +72,12 @@ export class AuditLogger {
       );
     }
 
-    const action =
-      record.action === "rsvp"
-        ? "RSVP’d for"
-        : "cancelled their RSVP for";
+    const action = {
+      interest_rsvp: "showed interest in",
+      interest_ticket: "showed ticket interest in",
+      rsvp: "RSVP’d for",
+      cancel: "cancelled their RSVP for",
+    }[record.action];
     const eventUrl =
       `https://discord.com/channels/${record.guild_id}/` +
       `${record.announcement_channel_id}/${record.message_id}`;

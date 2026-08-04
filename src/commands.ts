@@ -16,6 +16,18 @@ export const commandDefinitions = [
       subcommand
         .setName("create")
         .setDescription("Create a new event announcement")
+        .addStringOption((option) =>
+          option
+            .setName("start_time")
+            .setDescription("Start in Brisbane time: YYYY-MM-DD HH:mm")
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("finish_time")
+            .setDescription("Finish in Brisbane time: YYYY-MM-DD HH:mm")
+            .setRequired(true),
+        )
         .addAttachmentOption((option) =>
           option
             .setName("artwork")
@@ -43,7 +55,31 @@ export const commandDefinitions = [
             .setName("test_event")
             .setDescription("Use Stripe test mode; no real money is charged")
             .setRequired(false),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("ticket_close_time")
+            .setDescription("Optional sales close: YYYY-MM-DD HH:mm Brisbane time")
+            .setRequired(false),
         ),
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("reminder")
+    .setDescription("Reply to an event announcement with a reminder")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addStringOption((option) =>
+      option
+        .setName("announcement")
+        .setDescription("Paste the event announcement link")
+        .setRequired(true),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("message")
+        .setDescription("Reminder text; mentions such as @everyone are allowed")
+        .setMaxLength(1_800)
+        .setRequired(true),
     )
     .toJSON(),
 ];

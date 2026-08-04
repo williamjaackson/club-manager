@@ -34,6 +34,9 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
         guild_id: pending.guildId,
         artwork_url: pending.artworkUrl ?? null,
         artwork_name: pending.artworkName ?? null,
+        starts_at: pending.startsAt ?? null,
+        ends_at: pending.endsAt ?? null,
+        ticket_sales_close_at: pending.ticketSalesCloseAt ?? null,
       };
       return new Promise((resolve) => {
         finishPendingSave = resolve;
@@ -93,6 +96,11 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
       getBoolean() {
         return null;
       },
+      getString(name) {
+        if (name === "start_time") return "2099-08-08 10:00";
+        if (name === "finish_time") return "2099-08-08 17:00";
+        return null;
+      },
     },
     async showModal(value) {
       modal = value.toJSON();
@@ -102,7 +110,6 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
 
   const values = {
     "event-title": event.title,
-    "event-schedule": event.schedule_text,
     "event-location": event.location,
     "event-announcement": event.announcement,
   };
@@ -170,6 +177,12 @@ test("records the test-event flag with paid event creation", async () => {
       getNumber() { return 12.5; },
       getInteger() { return 50; },
       getBoolean() { return true; },
+      getString(name) {
+        if (name === "start_time") return "2099-08-08 10:00";
+        if (name === "finish_time") return "2099-08-08 17:00";
+        if (name === "ticket_close_time") return "2099-08-07 17:00";
+        return null;
+      },
     },
     async showModal() {},
   });
@@ -177,6 +190,177 @@ test("records the test-event flag with paid event creation", async () => {
   assert.equal(pending.ticketPriceCents, 1250);
   assert.equal(pending.ticketLimit, 50);
   assert.equal(pending.testMode, true);
+  assert.equal(
+    pending.startsAt,
+    Math.floor(Date.parse("2099-08-08T10:00:00+10:00") / 1000),
+  );
+  assert.equal(
+    pending.ticketSalesCloseAt,
+    Math.floor(Date.parse("2099-08-07T17:00:00+10:00") / 1000),
+  );
+});
+
+test("replies to an event announcement with a reusable admission button", async () => {
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "32345678901234567",
+    title: "Reminder event",
+    ticket_price_cents: null,
+    ticket_currency: null,
+    ends_at: Math.floor(Date.now() / 1000) + 86_400,
+    status: "published",
+  };
+  let replyOptions;
+  let recorded;
+  let confirmation;
+  const reminder = {
+    id: "42345678901234567",
+    async delete() { assert.fail("successful reminders must not be deleted"); },
+  };
+  const controller = new EventController({
+    async getEventByMessageId(guildId, messageId) {
+      assert.equal(guildId, event.guild_id);
+      assert.equal(messageId, event.message_id);
+      return event;
+    },
+    async recordEventReminder(eventId, messageId) {
+      recorded = { eventId, messageId };
+    },
+  }, {}, {});
+
+  await controller.handleCommand({
+    commandName: "reminder",
+    guildId: event.guild_id,
+    memberPermissions: { has() { return true; } },
+    inGuild() { return true; },
+    options: {
+      getString(name) {
+        if (name === "announcement") {
+          return `https://discord.com/channels/${event.guild_id}/${event.announcement_channel_id}/${event.message_id}`;
+        }
+        return "@everyone Reminder this Saturday";
+      },
+    },
+    client: {
+      channels: {
+        async fetch(channelId) {
+          assert.equal(channelId, event.announcement_channel_id);
+          return {
+            type: ChannelType.GuildText,
+            messages: {
+              async fetch(messageId) {
+                assert.equal(messageId, event.message_id);
+                return {
+                  async reply(options) {
+                    replyOptions = options;
+                    return reminder;
+                  },
+                };
+              },
+            },
+          };
+        },
+      },
+    },
+    async deferReply(options) {
+      assert.equal(options.flags, MessageFlags.Ephemeral);
+    },
+    async editReply(options) { confirmation = options; },
+  });
+
+  assert.equal(replyOptions.content, "@everyone Reminder this Saturday");
+  assert.equal(
+    replyOptions.components[0].components[0].toJSON().custom_id,
+    `event:rsvp:${event.id}`,
+  );
+  assert.deepEqual(recorded, {
+    eventId: event.id,
+    messageId: reminder.id,
+  });
+  assert.match(confirmation.content, /Sent a reminder/);
+});
+
+test("logs interest but refuses admission buttons after their deadlines", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const base = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "32345678901234567",
+    creator_id: "42345678901234567",
+    title: "Closed event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    status: "published",
+    created_at: 100,
+    published_at: 101,
+  };
+  const cases = [
+    {
+      action: "rsvp",
+      kind: "rsvp",
+      event: {
+        ...base,
+        ticket_price_cents: null,
+        ticket_currency: null,
+        ends_at: now - 1,
+      },
+      error: /event has finished/i,
+    },
+    {
+      action: "buy",
+      kind: "ticket",
+      event: {
+        ...base,
+        ticket_price_cents: 1250,
+        ticket_currency: "aud",
+        ends_at: now + 3_600,
+        ticket_sales_close_at: now - 1,
+      },
+      error: /ticket sales.*closed/i,
+    },
+  ];
+
+  for (const testCase of cases) {
+    let interest;
+    const controller = new EventController({
+      async getEvent() { return testCase.event; },
+      async recordInterest(eventId, userId, kind) {
+        interest = { eventId, userId, kind };
+        return true;
+      },
+      async getRsvpStatus() {
+        assert.fail("closed buttons must stop before RSVP lookup");
+      },
+    }, { async flush() {} }, {
+      async startCheckout() {
+        assert.fail("closed buttons must stop before Checkout");
+      },
+    });
+
+    await assert.rejects(
+      controller.handleButton({
+        customId: `event:${testCase.action}:${base.id}`,
+        guildId: base.guild_id,
+        user: { id: "52345678901234567" },
+        message: { id: base.message_id },
+        member: { roles: ["1257896371973914674"] },
+        async deferReply() {},
+        async editReply() {},
+      }),
+      testCase.error,
+    );
+    assert.deepEqual(interest, {
+      eventId: base.id,
+      userId: "52345678901234567",
+      kind: testCase.kind,
+    });
+  }
 });
 
 test("requires a connected or exempt role before showing the RSVP confirmation", async () => {
@@ -184,8 +368,15 @@ test("requires a connected or exempt role before showing the RSVP confirmation",
   let reply;
   const controller = new EventController({
     async getEvent() { return event; },
+    async recordInterest(eventId, userId, kind) {
+      assert.deepEqual(
+        { eventId, userId, kind },
+        { eventId: event.id, userId: "42345678901234567", kind: "rsvp" },
+      );
+      return true;
+    },
     async getRsvpStatus() { assert.fail("ineligible members must not reach the RSVP lookup"); },
-  }, {});
+  }, { async flush() {} }, {});
 
   await controller.handleButton({
     customId: `event:rsvp:${event.id}`,
@@ -416,8 +607,15 @@ test("opens Stripe Checkout privately for an eligible paid-event member", async 
       async getEvent() {
         return event;
       },
+      async recordInterest(eventId, userId, kind) {
+        assert.deepEqual(
+          { eventId, userId, kind },
+          { eventId: event.id, userId: "52345678901234567", kind: "ticket" },
+        );
+        return true;
+      },
     },
-    {},
+    { async flush() {} },
     {
       async startCheckout(receivedEvent, userId) {
         assert.equal(receivedEvent, event);

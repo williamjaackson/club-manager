@@ -18,7 +18,9 @@ import {
 import type { AuditLogger } from "./audit.js";
 import { rsvpEligibility } from "./rsvp-eligibility.js";
 import {
+  EventFinishedError,
   EventUnavailableError,
+  TicketSalesClosedError,
   type EventRecord,
   type NewEventDraft,
   type NewPendingEventCreate,
@@ -30,6 +32,7 @@ import {
   buildCurrentRsvp,
   buildEventPreview,
   buildPublicEventMessage,
+  buildReminderMessage,
   buildRsvpComplete,
   buildRsvpPrompt,
   buildTicketCheckout,
@@ -68,6 +71,11 @@ export class EventController {
       return true;
     }
 
+    if (interaction.commandName === "reminder") {
+      await this.#sendReminder(interaction);
+      return true;
+    }
+
     if (
       interaction.commandName !== "event" ||
       interaction.options.getSubcommand() !== "create"
@@ -82,14 +90,44 @@ export class EventController {
     }
 
     const artwork = interaction.options.getAttachment("artwork");
+    const startsAt = parseBrisbaneDateTime(
+      interaction.options.getString("start_time", true),
+      "start_time",
+    );
+    const endsAt = parseBrisbaneDateTime(
+      interaction.options.getString("finish_time", true),
+      "finish_time",
+    );
     const ticketPrice = interaction.options.getNumber("ticket_price");
     const ticketLimit = interaction.options.getInteger("ticket_limit");
     const testEvent = interaction.options.getBoolean("test_event") ?? false;
+    const ticketCloseInput = interaction.options.getString("ticket_close_time");
+    const ticketSalesCloseAt = ticketCloseInput
+      ? parseBrisbaneDateTime(ticketCloseInput, "ticket_close_time")
+      : undefined;
     this.#validateArtwork(artwork);
     const ticketPriceCents = this.#ticketPriceCents(ticketPrice);
 
     if (ticketLimit !== null && ticketPriceCents === undefined) {
       throw new Error("Set ticket_price when using ticket_limit.");
+    }
+    if (endsAt <= startsAt) {
+      throw new Error("finish_time must be after start_time.");
+    }
+    if (endsAt <= currentTimestamp()) {
+      throw new Error("finish_time must be in the future.");
+    }
+    if (ticketSalesCloseAt !== undefined && ticketPriceCents === undefined) {
+      throw new Error("Set ticket_price when using ticket_close_time.");
+    }
+    if (
+      ticketSalesCloseAt !== undefined &&
+      ticketSalesCloseAt <= currentTimestamp()
+    ) {
+      throw new Error("ticket_close_time must be in the future.");
+    }
+    if (ticketSalesCloseAt !== undefined && ticketSalesCloseAt >= endsAt) {
+      throw new Error("ticket_close_time must be earlier than finish_time.");
     }
     if (testEvent && ticketPriceCents === undefined) {
       throw new Error("Set ticket_price when creating a test event.");
@@ -100,6 +138,8 @@ export class EventController {
       token,
       userId: interaction.user.id,
       guildId: interaction.guildId,
+      startsAt,
+      endsAt,
     };
 
     if (artwork) {
@@ -112,6 +152,9 @@ export class EventController {
     }
     if (ticketLimit !== null) pending.ticketLimit = ticketLimit;
     if (testEvent) pending.testMode = true;
+    if (ticketSalesCloseAt !== undefined) {
+      pending.ticketSalesCloseAt = ticketSalesCloseAt;
+    }
 
     await Promise.all([
       this.#store.createPendingEventCreate(pending),
@@ -155,14 +198,23 @@ export class EventController {
       throw new Error("Select a text channel where the bot can send messages.");
     }
 
+    let scheduleText: string;
+    if (
+      typeof pending.starts_at === "number" &&
+      typeof pending.ends_at === "number"
+    ) {
+      scheduleText = formatScheduleText(pending.starts_at, pending.ends_at);
+    } else {
+      scheduleText = interaction.fields
+        .getTextInputValue("event-schedule")
+        .trim();
+    }
     const draft: NewEventDraft = {
       guildId: interaction.guildId,
       announcementChannelId: channel.id,
       creatorId: interaction.user.id,
       title: interaction.fields.getTextInputValue(eventIds.title).trim(),
-      scheduleText: interaction.fields
-        .getTextInputValue(eventIds.schedule)
-        .trim(),
+      scheduleText,
       location: interaction.fields
         .getTextInputValue(eventIds.location)
         .trim(),
@@ -181,11 +233,82 @@ export class EventController {
     }
     if (pending.ticket_limit) draft.ticketLimit = pending.ticket_limit;
     if (pending.test_mode) draft.testMode = true;
+    if (
+      typeof pending.starts_at === "number" &&
+      typeof pending.ends_at === "number"
+    ) {
+      draft.startsAt = pending.starts_at;
+      draft.endsAt = pending.ends_at;
+    }
+    if (typeof pending.ticket_sales_close_at === "number") {
+      draft.ticketSalesCloseAt = pending.ticket_sales_close_at;
+    }
 
     const event = await this.#store.createEventDraft(draft);
 
     await interaction.editReply(buildEventPreview(event));
     return true;
+  }
+
+  async #sendReminder(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Reminders can only be sent inside a server.");
+    }
+
+    const link = parseAnnouncementLink(
+      interaction.options.getString("announcement", true),
+    );
+    if (!link || link.guildId !== interaction.guildId) {
+      throw new Error("Paste an event announcement link from this server.");
+    }
+    const reminderText = interaction.options.getString("message", true).trim();
+    if (!reminderText) {
+      throw new Error("Reminder message cannot be empty.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const event = await this.#store.getEventByMessageId(
+      interaction.guildId,
+      link.messageId,
+    );
+    if (
+      !event ||
+      event.status !== "published" ||
+      event.announcement_channel_id !== link.channelId
+    ) {
+      throw new Error("That link is not a published event announcement.");
+    }
+
+    const channel = await interaction.client.channels.fetch(link.channelId);
+    if (
+      channel?.type !== ChannelType.GuildText &&
+      channel?.type !== ChannelType.GuildAnnouncement
+    ) {
+      throw new Error("The event announcement channel is unavailable.");
+    }
+
+    const announcement = await channel.messages.fetch(link.messageId);
+    const reminder = await announcement.reply(
+      buildReminderMessage(
+        event,
+        reminderText,
+      ),
+    );
+
+    try {
+      await this.#store.recordEventReminder(event.id, reminder.id);
+    } catch (error) {
+      await reminder.delete().catch(() => undefined);
+      throw error;
+    }
+
+    await interaction.editReply({
+      content: `✅ Sent a reminder for **${event.title}**.`,
+      components: [],
+    });
   }
 
   async handleButton(interaction: ButtonInteraction): Promise<boolean> {
@@ -373,10 +496,9 @@ export class EventController {
   ): Promise<void> {
     this.#requirePublished(event);
     this.#requireFreeEvent(event);
-
-    if (interaction.message.id !== event.message_id) {
-      throw new Error("Use the RSVP button on the original announcement.");
-    }
+    await this.#requireAdmissionMessage(interaction, event);
+    await this.#recordInterest(event, interaction.user.id, "rsvp");
+    this.#requireRsvpOpen(event);
 
     if (!this.#canRsvp(interaction)) {
       await interaction.editReply(this.#verificationRequiredReply());
@@ -400,6 +522,7 @@ export class EventController {
     event: EventRecord,
   ): Promise<void> {
     this.#requireFreeEvent(event);
+    this.#requireRsvpOpen(event);
 
     if (!this.#canRsvp(interaction)) {
       await interaction.editReply(this.#verificationRequiredReply());
@@ -425,10 +548,9 @@ export class EventController {
     event: EventRecord,
   ): Promise<void> {
     this.#requirePublished(event);
-
-    if (interaction.message.id !== event.message_id) {
-      throw new Error("Use the Buy ticket button on the original announcement.");
-    }
+    await this.#requireAdmissionMessage(interaction, event);
+    await this.#recordInterest(event, interaction.user.id, "ticket");
+    this.#requireTicketSalesOpen(event);
 
     if (!this.#canRsvp(interaction)) {
       await interaction.editReply(this.#verificationRequiredReply());
@@ -481,6 +603,50 @@ export class EventController {
   #requirePublished(event: EventRecord): void {
     if (event.status !== "published" || !event.message_id) {
       throw new EventUnavailableError();
+    }
+  }
+
+  async #requireAdmissionMessage(
+    interaction: ButtonInteraction,
+    event: EventRecord,
+  ): Promise<void> {
+    if (interaction.message.id === event.message_id) return;
+    if (
+      !(await this.#store.isEventAdmissionMessage(
+        event.id,
+        interaction.message.id,
+      ))
+    ) {
+      throw new Error("Use a ticket or RSVP button posted by Club Manager.");
+    }
+  }
+
+  async #recordInterest(
+    event: EventRecord,
+    userId: string,
+    kind: "rsvp" | "ticket",
+  ): Promise<void> {
+    if (await this.#store.recordInterest(event.id, userId, kind)) {
+      void this.#audit.flush();
+    }
+  }
+
+  #requireRsvpOpen(event: EventRecord): void {
+    if (typeof event.ends_at === "number" && event.ends_at <= currentTimestamp()) {
+      throw new EventFinishedError();
+    }
+  }
+
+  #requireTicketSalesOpen(event: EventRecord): void {
+    const now = currentTimestamp();
+    if (typeof event.ends_at === "number" && event.ends_at <= now) {
+      throw new EventFinishedError();
+    }
+    if (
+      typeof event.ticket_sales_close_at === "number" &&
+      event.ticket_sales_close_at <= now
+    ) {
+      throw new TicketSalesClosedError();
     }
   }
 
@@ -566,6 +732,64 @@ function safeAttachmentName(name: string): string {
     .replaceAll(/-+/g, "-")
     .slice(-100);
   return sanitized || "event-artwork.png";
+}
+
+function parseBrisbaneDateTime(value: string, optionName: string): number {
+  const match =
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/.exec(value.trim());
+  if (!match) {
+    throw new Error(`${optionName} must use YYYY-MM-DD HH:mm Brisbane time.`);
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59
+  ) {
+    throw new Error(`${optionName} is not a valid Brisbane date and time.`);
+  }
+
+  return Math.floor(
+    Date.parse(
+      `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+10:00`,
+    ) / 1000,
+  );
+}
+
+function formatScheduleText(startsAt: number, endsAt: number): string {
+  const formatter = new Intl.DateTimeFormat("en-AU", {
+    timeZone: "Australia/Brisbane",
+    dateStyle: "full",
+    timeStyle: "short",
+  });
+  return (
+    `${formatter.format(new Date(startsAt * 1000))} – ` +
+    `${formatter.format(new Date(endsAt * 1000))} (Brisbane)`
+  );
+}
+
+function parseAnnouncementLink(value: string):
+  | { guildId: string; channelId: string; messageId: string }
+  | undefined {
+  const match =
+    /^https:\/\/(?:(?:www|canary|ptb)\.)?discord(?:app)?\.com\/channels\/(\d{17,20})\/(\d{17,20})\/(\d{17,20})\/?$/.exec(
+      value.trim(),
+    );
+  if (!match?.[1] || !match[2] || !match[3]) return undefined;
+  return { guildId: match[1], channelId: match[2], messageId: match[3] };
+}
+
+function currentTimestamp(): number {
+  return Math.floor(Date.now() / 1000);
 }
 
 const eventWebhookName = "Club Manager Event Announcements";
