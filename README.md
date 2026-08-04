@@ -61,6 +61,12 @@ under Stripe's A$0.50 minimum (including 100% off) skip Stripe entirely and
 confirm the ticket for free. Each coupon can be used once; the highest
 applicable discount wins.
 
+Run `/coupon list` to browse issued coupons, newest first, with the same
+paginated management interface as `/event list`: pick a coupon to see its
+member, discount, scope, expiry, and status, and revoke it if it hasn't been
+redeemed. Redeemed coupons are part of the payment record and cannot be
+revoked.
+
 Run `/reminder announcement:<event message link> message:<your text>` to reply
 to a published announcement. The reminder supports mentions such as `@everyone`
 and repeats the event's trusted RSVP or ticket button. Closed admission buttons

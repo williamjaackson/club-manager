@@ -7,6 +7,7 @@ import {
 import type { EventAttendeeRecord, EventRecord } from "./database.js";
 import type { EventAttendance, EventReplyOptions } from "./event-ui.js";
 import { formatCurrencyAmount } from "./money.js";
+import { buildPagerRow, pageHeading } from "./pagination.js";
 
 export const EVENT_LIST_PAGE_SIZE = 5;
 
@@ -40,8 +41,6 @@ export function buildEventList(
     return `${position}. **${event.title}** — ${status} · ${kind}${when}`;
   });
 
-  const page = Math.floor(offset / EVENT_LIST_PAGE_SIZE) + 1;
-  const pages = Math.max(1, Math.ceil(total / EVENT_LIST_PAGE_SIZE));
   const select = new StringSelectMenuBuilder()
     .setCustomId(eventAdminIds.select)
     .setPlaceholder("Manage an event…")
@@ -52,21 +51,10 @@ export function buildEventList(
         value: String(event.id),
       })),
     );
-  const pager = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`event-admin:page:${Math.max(0, offset - EVENT_LIST_PAGE_SIZE)}`)
-      .setLabel("◀ Newer")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(offset === 0),
-    new ButtonBuilder()
-      .setCustomId(`event-admin:page:${offset + EVENT_LIST_PAGE_SIZE}`)
-      .setLabel("Older ▶")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(offset + EVENT_LIST_PAGE_SIZE >= total),
-  );
+  const pager = buildPagerRow("event-admin", offset, total, EVENT_LIST_PAGE_SIZE);
 
   return {
-    content: `**Events** — newest first (page ${page}/${pages})\n\n${lines.join("\n")}`,
+    content: `${pageHeading("Events", offset, total, EVENT_LIST_PAGE_SIZE)}\n\n${lines.join("\n")}`,
     embeds: [],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select),

@@ -990,3 +990,87 @@ test("fulfills a fully discounted order without Stripe", async () => {
     await context.close();
   }
 });
+
+test("lists coupons newest first and revokes only unredeemed ones", async () => {
+  const context = await fixture({
+    ticketPriceCents: 2000,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    const older = await context.store.createCoupon(
+      {
+        guildId: context.event.guild_id,
+        userId: "52345678901234567",
+        percentOff: 10,
+        eventId: context.event.id,
+        createdBy: "32345678901234567",
+      },
+      100,
+    );
+    const newer = await context.store.createCoupon(
+      {
+        guildId: context.event.guild_id,
+        userId: "62345678901234567",
+        percentOff: 50,
+        createdBy: "32345678901234567",
+      },
+      200,
+    );
+
+    const page = await context.store.listCoupons(context.event.guild_id, 0, 5);
+    assert.equal(page.total, 2);
+    assert.deepEqual(
+      page.coupons.map(({ id }) => id),
+      [newer.id, older.id],
+    );
+    assert.equal(page.coupons[1]?.event_title, "Test event");
+
+    // Redeem the older one; it can no longer be revoked.
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 300);
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      400,
+    );
+    const attached = await context.store.attachTicketCheckout(
+      reservation.order.id,
+      reservation.order.attempt,
+      "cs_admin_coupon",
+      "https://checkout.stripe.com/test",
+      401,
+    );
+    await context.store.fulfillTicketOrder(
+      attached.id,
+      "cs_admin_coupon",
+      {
+        paymentIntentId: "pi_admin_coupon",
+        amountTotal: 1800,
+        currency: "aud",
+        couponId: older.id,
+      },
+      500,
+    );
+
+    assert.equal(
+      await context.store.revokeCoupon(older.id, context.event.guild_id),
+      false,
+      "redeemed coupons cannot be revoked",
+    );
+    assert.equal(
+      await context.store.revokeCoupon(newer.id, context.event.guild_id),
+      true,
+    );
+    assert.equal(
+      await context.store.getCoupon(newer.id, context.event.guild_id),
+      undefined,
+    );
+    assert.equal(
+      (await context.store.listCoupons(context.event.guild_id, 0, 5)).total,
+      1,
+    );
+  } finally {
+    await context.close();
+  }
+});

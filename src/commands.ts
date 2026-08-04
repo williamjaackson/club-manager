@@ -56,6 +56,11 @@ export const commandDefinitions = [
             .setDescription("Expiry as YYYY-MM-DD HH:mm Brisbane time"),
         ),
     )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("list")
+        .setDescription("List coupons, newest first, with management actions"),
+    )
     .toJSON(),
   new SlashCommandBuilder()
     .setName("config")
