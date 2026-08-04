@@ -1,5 +1,7 @@
 import {
   ChannelSelectMenuBuilder,
+  CheckboxBuilder,
+  FileUploadBuilder,
   LabelBuilder,
   ModalBuilder,
   TextInputBuilder,
@@ -27,9 +29,16 @@ export const eventIds = {
   title: "event-title",
   location: "event-location",
   announcement: "event-announcement",
+  artwork: "event-artwork",
+  startsAt: "event-starts-at",
+  endsAt: "event-ends-at",
+  ticketSalesCloseAt: "event-ticket-sales-close-at",
+  ticketPrice: "event-ticket-price",
+  capacity: "event-capacity",
+  testMode: "event-test-mode",
 } as const;
 
-export function buildCreateEventModal(token: string): ModalBuilder {
+export function buildCreateEventDetailsModal(token: string): ModalBuilder {
   const channel = new ChannelSelectMenuBuilder()
     .setCustomId(eventIds.channel)
     .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
@@ -55,10 +64,15 @@ export function buildCreateEventModal(token: string): ModalBuilder {
     )
     .setMaxLength(1_250)
     .setRequired(true);
+  const artwork = new FileUploadBuilder()
+    .setCustomId(eventIds.artwork)
+    .setMinValues(0)
+    .setMaxValues(1)
+    .setRequired(false);
 
   return new ModalBuilder()
-    .setCustomId(`event:create:${token}`)
-    .setTitle("Create an event")
+    .setCustomId(`event:create:details:${token}`)
+    .setTitle("Event details (1/3)")
     .addLabelComponents(
       new LabelBuilder()
         .setLabel("Announcement channel")
@@ -70,7 +84,106 @@ export function buildCreateEventModal(token: string): ModalBuilder {
         .setLabel("Announcement")
         .setDescription("This appears in full on the public event post.")
         .setTextInputComponent(announcement),
+      new LabelBuilder()
+        .setLabel("Artwork (optional)")
+        .setDescription("Upload one image shown below the announcement.")
+        .setFileUploadComponent(artwork),
     );
+}
+
+export function buildCreateEventScheduleModal(token: string): ModalBuilder {
+  const startsAt = new TextInputBuilder()
+    .setCustomId(eventIds.startsAt)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("2026-08-10 09:00")
+    .setMaxLength(16)
+    .setRequired(true);
+  const endsAt = new TextInputBuilder()
+    .setCustomId(eventIds.endsAt)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("2026-08-12 17:00")
+    .setMaxLength(16)
+    .setRequired(false);
+  const ticketSalesCloseAt = new TextInputBuilder()
+    .setCustomId(eventIds.ticketSalesCloseAt)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("2026-08-09 17:00")
+    .setMaxLength(16)
+    .setRequired(false);
+
+  return new ModalBuilder()
+    .setCustomId(`event:create:schedule:${token}`)
+    .setTitle("Event schedule (2/3)")
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("Start time")
+        .setDescription("Required · YYYY-MM-DD HH:mm in Brisbane time.")
+        .setTextInputComponent(startsAt),
+      new LabelBuilder()
+        .setLabel("Finish time (optional)")
+        .setDescription("May be on a later date for multi-day events.")
+        .setTextInputComponent(endsAt),
+      new LabelBuilder()
+        .setLabel("Ticket sales close (optional)")
+        .setDescription("Paid events only · may close before the finish.")
+        .setTextInputComponent(ticketSalesCloseAt),
+    );
+}
+
+export function buildCreateEventAdmissionModal(token: string): ModalBuilder {
+  const ticketPrice = new TextInputBuilder()
+    .setCustomId(eventIds.ticketPrice)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("Leave blank for a free RSVP event")
+    .setMaxLength(10)
+    .setRequired(false);
+  const capacity = new TextInputBuilder()
+    .setCustomId(eventIds.capacity)
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("Leave blank for unlimited")
+    .setMaxLength(6)
+    .setRequired(false);
+  const testMode = new CheckboxBuilder()
+    .setCustomId(eventIds.testMode)
+    .setDefault(false);
+
+  return new ModalBuilder()
+    .setCustomId(`event:create:admission:${token}`)
+    .setTitle("Event admission (3/3)")
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel("Ticket price in AUD (optional)")
+        .setDescription("Leave blank to use free RSVPs instead of tickets.")
+        .setTextInputComponent(ticketPrice),
+      new LabelBuilder()
+        .setLabel("Capacity (optional)")
+        .setDescription("Maximum completed RSVPs or reserved/paid tickets.")
+        .setTextInputComponent(capacity),
+      new LabelBuilder()
+        .setLabel("Stripe test event")
+        .setDescription("No real money is charged; requires a ticket price.")
+        .setCheckboxComponent(testMode),
+    );
+}
+
+export function buildEventWizardContinue(
+  token: string,
+  step: "schedule" | "admission",
+): EventReplyOptions {
+  const button = new ButtonBuilder()
+    .setCustomId(`event:create:${step}:${token}`)
+    .setLabel(step === "schedule" ? "Continue to schedule" : "Continue to admission")
+    .setStyle(ButtonStyle.Primary);
+  return {
+    content:
+      step === "schedule"
+        ? "✅ Event details saved. Continue to add the schedule."
+        : "✅ Schedule saved. Continue to configure RSVPs or paid tickets.",
+    embeds: [],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(button),
+    ],
+  };
 }
 
 export function buildEventPreview(
@@ -264,13 +377,11 @@ function buildAnnouncementText(event: EventRecord): string {
     ? "## 🧪 TEST EVENT — NO REAL MONEY WILL BE CHARGED\n\n"
     : "";
   text += `# ${event.title}\n\n`;
-  if (
-    typeof event.starts_at === "number" &&
-    typeof event.ends_at === "number"
-  ) {
-    text +=
-      `📅 **Starts:** <t:${event.starts_at}:F> (<t:${event.starts_at}:R>)\n` +
-      `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
+  if (typeof event.starts_at === "number") {
+    text += `📅 **Starts:** <t:${event.starts_at}:F> (<t:${event.starts_at}:R>)\n`;
+    if (typeof event.ends_at === "number") {
+      text += `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
+    }
   } else {
     text += `📅 **${event.schedule_text}**\n`;
   }
@@ -278,15 +389,21 @@ function buildAnnouncementText(event: EventRecord): string {
 
   if (event.ticket_price_cents && event.ticket_currency) {
     text += `\n\n🎟️ **Tickets: ${formatTicketPrice(event)}**`;
-    if (event.ticket_limit !== null) {
+    if (typeof event.ticket_limit === "number") {
       text += ` · ${event.ticket_limit}-ticket capacity`;
     }
     const salesClose = event.ticket_sales_close_at ?? event.ends_at;
     if (typeof salesClose === "number") {
       text += `\n⏳ **Ticket sales close:** <t:${salesClose}:F> (<t:${salesClose}:R>)`;
     }
-  } else if (typeof event.ends_at === "number") {
-    text += `\n\n⏳ **RSVPs close:** <t:${event.ends_at}:F> (<t:${event.ends_at}:R>)`;
+  } else {
+    if (typeof event.ticket_limit === "number") {
+      text += `\n\n🎟️ **RSVP capacity:** ${event.ticket_limit} people`;
+    }
+    if (typeof event.ends_at === "number") {
+      text += `\n${typeof event.ticket_limit === "number" ? "" : "\n"}` +
+        `⏳ **RSVPs close:** <t:${event.ends_at}:F> (<t:${event.ends_at}:R>)`;
+    }
   }
 
   return text;
@@ -297,11 +414,15 @@ function buildCompactRsvpText(
   heading: string,
   message: string,
 ): string {
-  const schedule =
-    typeof event.starts_at === "number" && typeof event.ends_at === "number"
-      ? `📅 **Starts:** <t:${event.starts_at}:F>\n` +
-        `🏁 **Finishes:** <t:${event.ends_at}:F>\n`
-      : `📅 **${event.schedule_text}**\n`;
+  let schedule: string;
+  if (typeof event.starts_at === "number") {
+    schedule = `📅 **Starts:** <t:${event.starts_at}:F>\n`;
+    if (typeof event.ends_at === "number") {
+      schedule += `🏁 **Finishes:** <t:${event.ends_at}:F>\n`;
+    }
+  } else {
+    schedule = `📅 **${event.schedule_text}**\n`;
+  }
   return (
     `**${heading}**\n\n` +
     schedule +

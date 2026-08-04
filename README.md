@@ -16,24 +16,29 @@ RSVP changes are also mirrored to a private audit channel.
 Run:
 
 ```text
-/event create start_time:<YYYY-MM-DD HH:mm> finish_time:<YYYY-MM-DD HH:mm> artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity> test_event:<optional boolean> ticket_close_time:<optional YYYY-MM-DD HH:mm>
+/event create
 ```
 
-Times are entered in Brisbane time. The modal collects the announcement
-channel, event name, location, and complete announcement. The resulting preview
-is visible only to the administrator and must be explicitly published or
-discarded. Published times use Discord timestamps, which each member sees in
-their own local time.
+The command opens a persistent three-step Discord wizard. It collects event
+details and optional artwork, the schedule, then RSVP or ticket settings. A
+**Continue** button opens each successive form because Discord cannot open a
+modal directly from another modal submission. The resulting preview is visible
+only to the administrator and must be explicitly published or discarded.
 
-Omit `ticket_price` for an RSVP-only event. When it is present, the event post
-shows the price and a **Buy ticket** button. `ticket_limit` is optional, but can
-only be used with a ticket price. Ticket prices currently use AUD.
-`ticket_close_time` can close paid sales before the event finishes and can only
-be used with a ticket price. Without it, ticket sales close at finish time.
+Times are entered in Brisbane time. Start time is required, while finish time
+is optional and may be on a later date for a multi-day event. Published times
+use Discord timestamps, which each member sees in their own local time.
 
-Set `test_event:true` with a ticket price to exercise the complete Stripe
-sandbox Checkout and ticket-fulfillment flow. Test events are clearly labelled
-and never use the primary Stripe key or charge real money.
+Leave ticket price blank for an RSVP-only event. When a price is present, the
+event post shows it and a **Buy ticket** button. Optional capacity limits either
+completed free RSVPs or reserved/paid tickets. Ticket prices currently use AUD.
+The optional ticket close time can close paid sales before the event finishes
+and can only be used with a ticket price. Without it, ticket sales close at the
+finish time when one is set.
+
+Select **Stripe test event** with a ticket price to exercise the complete
+Stripe sandbox Checkout and ticket-fulfillment flow. Test events are clearly
+labelled and never use the primary Stripe key or charge real money.
 
 The command is hidden from non-administrators by its Discord command
 permissions. Every create, publish, and discard interaction also checks the
@@ -54,10 +59,11 @@ Checkout. One Discord member can hold one paid ticket for an event. Selecting
 the button after purchase shows the existing ticket confirmation instead of
 charging again.
 
-RSVP interactions stop at the event finish time. New ticket Checkout links stop
-at the optional ticket close time, or at finish time when no earlier close is
-set. The controller and database both enforce these deadlines, including for
-buttons copied onto reminders.
+RSVP interactions stop at the event finish time when one is set. New ticket
+Checkout links stop at the optional ticket close time, or at finish time when
+no earlier close is set. Events without either deadline remain open. The
+controller and database both enforce these deadlines and capacities, including
+for buttons copied onto reminders.
 
 Stripe's signed webhook is the source of truth for payment fulfillment. The
 success redirect never creates a ticket. Checkout creation and webhook
@@ -202,13 +208,13 @@ docker compose --profile dev run --rm bot-dev
 The Neon PostgreSQL database contains:
 
 - Event drafts and published message references
-- Structured start, finish, and optional ticket-close times
+- Structured start, optional finish, and optional ticket-close times
 - Current RSVP state
 - Immutable RSVP/cancellation history
 - Idempotent RSVP and ticket interest records
 - Reminder message references for trusted copied buttons
 - Pending and delivered audit notifications
-- Open event-creation forms, with a 15-minute expiry
-- Ticket price and capacity on paid events
+- Persistent multi-step event-creation forms, with a 15-minute expiry
+- RSVP and ticket prices/capacities
 - Pending Checkout reservations and fulfilled paid tickets
 - Stripe Checkout, PaymentIntent, customer, and receipt-reconciliation fields

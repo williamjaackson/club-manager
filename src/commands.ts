@@ -15,53 +15,7 @@ export const commandDefinitions = [
     .addSubcommand((subcommand) =>
       subcommand
         .setName("create")
-        .setDescription("Create a new event announcement")
-        .addStringOption((option) =>
-          option
-            .setName("start_time")
-            .setDescription("Start in Brisbane time: YYYY-MM-DD HH:mm")
-            .setRequired(true),
-        )
-        .addStringOption((option) =>
-          option
-            .setName("finish_time")
-            .setDescription("Finish in Brisbane time: YYYY-MM-DD HH:mm")
-            .setRequired(true),
-        )
-        .addAttachmentOption((option) =>
-          option
-            .setName("artwork")
-            .setDescription("Optional image shown below the announcement")
-            .setRequired(false),
-        )
-        .addNumberOption((option) =>
-          option
-            .setName("ticket_price")
-            .setDescription("AUD ticket price; omit for an RSVP-only event")
-            .setMinValue(0.5)
-            .setMaxValue(100_000)
-            .setRequired(false),
-        )
-        .addIntegerOption((option) =>
-          option
-            .setName("ticket_limit")
-            .setDescription("Maximum paid tickets; omit for unlimited")
-            .setMinValue(1)
-            .setMaxValue(100_000)
-            .setRequired(false),
-        )
-        .addBooleanOption((option) =>
-          option
-            .setName("test_event")
-            .setDescription("Use Stripe test mode; no real money is charged")
-            .setRequired(false),
-        )
-        .addStringOption((option) =>
-          option
-            .setName("ticket_close_time")
-            .setDescription("Optional sales close: YYYY-MM-DD HH:mm Brisbane time")
-            .setRequired(false),
-        ),
+        .setDescription("Create a new event announcement"),
     )
     .toJSON(),
   new SlashCommandBuilder()

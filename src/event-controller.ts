@@ -24,13 +24,17 @@ import {
   type EventRecord,
   type NewEventDraft,
   type NewPendingEventCreate,
+  type PendingEventCreateRecord,
   type Store,
 } from "./database.js";
 import {
   buildCancellationComplete,
-  buildCreateEventModal,
+  buildCreateEventAdmissionModal,
+  buildCreateEventDetailsModal,
+  buildCreateEventScheduleModal,
   buildCurrentRsvp,
   buildEventPreview,
+  buildEventWizardContinue,
   buildPublicEventMessage,
   buildReminderMessage,
   buildRsvpComplete,
@@ -89,165 +93,229 @@ export class EventController {
       throw new Error("Events can only be created inside a server.");
     }
 
-    const artwork = interaction.options.getAttachment("artwork");
-    const startsAt = parseBrisbaneDateTime(
-      interaction.options.getString("start_time", true),
-      "start_time",
-    );
-    const endsAt = parseBrisbaneDateTime(
-      interaction.options.getString("finish_time", true),
-      "finish_time",
-    );
-    const ticketPrice = interaction.options.getNumber("ticket_price");
-    const ticketLimit = interaction.options.getInteger("ticket_limit");
-    const testEvent = interaction.options.getBoolean("test_event") ?? false;
-    const ticketCloseInput = interaction.options.getString("ticket_close_time");
-    const ticketSalesCloseAt = ticketCloseInput
-      ? parseBrisbaneDateTime(ticketCloseInput, "ticket_close_time")
-      : undefined;
-    this.#validateArtwork(artwork);
-    const ticketPriceCents = this.#ticketPriceCents(ticketPrice);
-
-    if (ticketLimit !== null && ticketPriceCents === undefined) {
-      throw new Error("Set ticket_price when using ticket_limit.");
-    }
-    if (endsAt <= startsAt) {
-      throw new Error("finish_time must be after start_time.");
-    }
-    if (endsAt <= currentTimestamp()) {
-      throw new Error("finish_time must be in the future.");
-    }
-    if (ticketSalesCloseAt !== undefined && ticketPriceCents === undefined) {
-      throw new Error("Set ticket_price when using ticket_close_time.");
-    }
-    if (
-      ticketSalesCloseAt !== undefined &&
-      ticketSalesCloseAt <= currentTimestamp()
-    ) {
-      throw new Error("ticket_close_time must be in the future.");
-    }
-    if (ticketSalesCloseAt !== undefined && ticketSalesCloseAt >= endsAt) {
-      throw new Error("ticket_close_time must be earlier than finish_time.");
-    }
-    if (testEvent && ticketPriceCents === undefined) {
-      throw new Error("Set ticket_price when creating a test event.");
-    }
-
     const token = randomBytes(16).toString("hex");
     const pending: NewPendingEventCreate = {
       token,
       userId: interaction.user.id,
       guildId: interaction.guildId,
-      startsAt,
-      endsAt,
     };
 
-    if (artwork) {
-      pending.artworkUrl = artwork.url;
-      pending.artworkName = safeAttachmentName(artwork.name);
-    }
-    if (ticketPriceCents !== undefined) {
-      pending.ticketPriceCents = ticketPriceCents;
-      pending.ticketCurrency = "aud";
-    }
-    if (ticketLimit !== null) pending.ticketLimit = ticketLimit;
-    if (testEvent) pending.testMode = true;
-    if (ticketSalesCloseAt !== undefined) {
-      pending.ticketSalesCloseAt = ticketSalesCloseAt;
-    }
-
-    await Promise.all([
-      this.#store.createPendingEventCreate(pending),
-      interaction.showModal(buildCreateEventModal(token)),
-    ]);
+    await this.#store.createPendingEventCreate(pending);
+    await interaction.showModal(buildCreateEventDetailsModal(token));
     return true;
   }
 
   async handleModal(interaction: ModalSubmitInteraction): Promise<boolean> {
-    if (!interaction.customId.startsWith("event:create:")) return false;
+    const parsed = parseEventWizardStep(interaction.customId);
+    if (!parsed) return false;
 
     this.#requireAdministrator(interaction);
-
-    const token = interaction.customId.slice("event:create:".length);
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const pending = await this.#store.consumePendingEventCreate(
-      token,
-      interaction.user.id,
-      interaction.guildId,
-    );
-
-    if (!pending) {
-      await interaction.editReply({
-        content: "This event form expired. Run `/event create` again.",
-      });
-      return true;
-    }
-
     if (!interaction.guildId) {
       throw new Error("Events can only be created inside a server.");
     }
 
+    switch (parsed.step) {
+      case "details":
+        await this.#saveEventDetails(interaction, parsed.token);
+        return true;
+      case "schedule":
+        await this.#saveEventSchedule(interaction, parsed.token);
+        return true;
+      case "admission":
+        await this.#finishEventWizard(interaction, parsed.token);
+        return true;
+    }
+  }
+
+  async #saveEventDetails(
+    interaction: ModalSubmitInteraction,
+    token: string,
+  ): Promise<void> {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const channels = interaction.fields.getSelectedChannels(
       eventIds.channel,
       true,
       [ChannelType.GuildText, ChannelType.GuildAnnouncement],
     );
     const channel = channels.first();
-
     if (!channel?.isSendable()) {
       throw new Error("Select a text channel where the bot can send messages.");
     }
 
-    let scheduleText: string;
-    if (
-      typeof pending.starts_at === "number" &&
-      typeof pending.ends_at === "number"
-    ) {
-      scheduleText = formatScheduleText(pending.starts_at, pending.ends_at);
-    } else {
-      scheduleText = interaction.fields
-        .getTextInputValue("event-schedule")
-        .trim();
+    const artwork = interaction.fields.getUploadedFiles(eventIds.artwork)?.first();
+    this.#validateArtwork(artwork ?? null);
+    const saved = await this.#store.updatePendingEventDetails(
+      token,
+      interaction.user.id,
+      interaction.guildId,
+      {
+        announcementChannelId: channel.id,
+        title: interaction.fields.getTextInputValue(eventIds.title).trim(),
+        location: interaction.fields.getTextInputValue(eventIds.location).trim(),
+        announcement: interaction.fields
+          .getTextInputValue(eventIds.announcement)
+          .trim(),
+        ...(artwork
+          ? {
+              artworkUrl: artwork.url,
+              artworkName: safeAttachmentName(artwork.name),
+            }
+          : {}),
+      },
+    );
+    if (!saved) {
+      await this.#eventWizardExpired(interaction);
+      return;
     }
-    const draft: NewEventDraft = {
-      guildId: interaction.guildId,
-      announcementChannelId: channel.id,
-      creatorId: interaction.user.id,
-      title: interaction.fields.getTextInputValue(eventIds.title).trim(),
-      scheduleText,
-      location: interaction.fields
-        .getTextInputValue(eventIds.location)
-        .trim(),
-      announcement: interaction.fields
-        .getTextInputValue(eventIds.announcement)
-        .trim(),
-    };
+    await interaction.editReply(buildEventWizardContinue(token, "schedule"));
+  }
 
+  async #saveEventSchedule(
+    interaction: ModalSubmitInteraction,
+    token: string,
+  ): Promise<void> {
+    const startsAt = parseBrisbaneDateTime(
+      interaction.fields.getTextInputValue(eventIds.startsAt),
+      "Start time",
+    );
+    const endsAt = optionalBrisbaneDateTime(
+      interaction.fields.getTextInputValue(eventIds.endsAt),
+      "Finish time",
+    );
+    const ticketSalesCloseAt = optionalBrisbaneDateTime(
+      interaction.fields.getTextInputValue(eventIds.ticketSalesCloseAt),
+      "Ticket sales close",
+    );
+    if (endsAt !== undefined && endsAt <= startsAt) {
+      throw new Error("Finish time must be after the start time.");
+    }
+    if (endsAt !== undefined && endsAt <= currentTimestamp()) {
+      throw new Error("Finish time must be in the future.");
+    }
+    if (
+      ticketSalesCloseAt !== undefined &&
+      ticketSalesCloseAt <= currentTimestamp()
+    ) {
+      throw new Error("Ticket sales close must be in the future.");
+    }
+    if (
+      endsAt !== undefined &&
+      ticketSalesCloseAt !== undefined &&
+      ticketSalesCloseAt >= endsAt
+    ) {
+      throw new Error("Ticket sales close must be earlier than the finish time.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const saved = await this.#store.updatePendingEventSchedule(
+      token,
+      interaction.user.id,
+      interaction.guildId,
+      {
+        startsAt,
+        ...(endsAt !== undefined ? { endsAt } : {}),
+        ...(ticketSalesCloseAt !== undefined ? { ticketSalesCloseAt } : {}),
+      },
+    );
+    if (!saved) {
+      await this.#eventWizardExpired(interaction);
+      return;
+    }
+    await interaction.editReply(buildEventWizardContinue(token, "admission"));
+  }
+
+  async #finishEventWizard(
+    interaction: ModalSubmitInteraction,
+    token: string,
+  ): Promise<void> {
+    const ticketPriceCents = this.#ticketPriceCents(
+      interaction.fields.getTextInputValue(eventIds.ticketPrice),
+    );
+    const capacity = this.#capacity(
+      interaction.fields.getTextInputValue(eventIds.capacity),
+    );
+    const testMode = interaction.fields.getCheckbox(eventIds.testMode);
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const pending = await this.#pendingEventWizard(interaction, token);
+    if (!pending) {
+      await this.#eventWizardExpired(interaction);
+      return;
+    }
+    if (
+      !pending.announcement_channel_id ||
+      !pending.title ||
+      !pending.location ||
+      !pending.announcement ||
+      typeof pending.starts_at !== "number"
+    ) {
+      throw new Error("Complete the event details and schedule steps first.");
+    }
+    if (pending.ticket_sales_close_at !== null && ticketPriceCents === undefined) {
+      throw new Error("Ticket sales close requires a paid ticket price.");
+    }
+    if (testMode && ticketPriceCents === undefined) {
+      throw new Error("Stripe test events require a paid ticket price.");
+    }
+
+    const consumed = await this.#store.consumePendingEventCreate(
+      token,
+      interaction.user.id,
+      interaction.guildId,
+    );
+    if (!consumed) {
+      await this.#eventWizardExpired(interaction);
+      return;
+    }
+
+    const draft: NewEventDraft = {
+      guildId: interaction.guildId!,
+      announcementChannelId: pending.announcement_channel_id,
+      creatorId: interaction.user.id,
+      title: pending.title,
+      scheduleText: formatScheduleText(
+        pending.starts_at,
+        pending.ends_at ?? undefined,
+      ),
+      location: pending.location,
+      announcement: pending.announcement,
+      startsAt: pending.starts_at,
+    };
+    if (pending.ends_at !== null) draft.endsAt = pending.ends_at;
     if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
     if (pending.artwork_name) draft.artworkName = pending.artwork_name;
-    if (pending.ticket_price_cents) {
-      draft.ticketPriceCents = pending.ticket_price_cents;
+    if (ticketPriceCents !== undefined) {
+      draft.ticketPriceCents = ticketPriceCents;
+      draft.ticketCurrency = "aud";
     }
-    if (pending.ticket_currency) {
-      draft.ticketCurrency = pending.ticket_currency;
-    }
-    if (pending.ticket_limit) draft.ticketLimit = pending.ticket_limit;
-    if (pending.test_mode) draft.testMode = true;
-    if (
-      typeof pending.starts_at === "number" &&
-      typeof pending.ends_at === "number"
-    ) {
-      draft.startsAt = pending.starts_at;
-      draft.endsAt = pending.ends_at;
-    }
-    if (typeof pending.ticket_sales_close_at === "number") {
+    if (capacity !== undefined) draft.ticketLimit = capacity;
+    if (testMode) draft.testMode = true;
+    if (pending.ticket_sales_close_at !== null) {
       draft.ticketSalesCloseAt = pending.ticket_sales_close_at;
     }
 
     const event = await this.#store.createEventDraft(draft);
-
     await interaction.editReply(buildEventPreview(event));
-    return true;
+  }
+
+  async #pendingEventWizard(
+    interaction: ModalSubmitInteraction | ButtonInteraction,
+    token: string,
+  ): Promise<PendingEventCreateRecord | undefined> {
+    const pending = await this.#store.getPendingEventCreate(token);
+    return pending?.user_id === interaction.user.id &&
+      pending.guild_id === interaction.guildId
+      ? pending
+      : undefined;
+  }
+
+  async #eventWizardExpired(
+    interaction: ModalSubmitInteraction | ButtonInteraction,
+  ): Promise<void> {
+    await interaction.editReply({
+      content: "This event form expired. Run `/event create` again.",
+      components: [],
+    });
   }
 
   async #sendReminder(
@@ -312,6 +380,25 @@ export class EventController {
   }
 
   async handleButton(interaction: ButtonInteraction): Promise<boolean> {
+    const wizard = parseEventWizardStep(interaction.customId);
+    if (wizard && wizard.step !== "details") {
+      this.#requireAdministrator(interaction);
+      const pending = await this.#pendingEventWizard(interaction, wizard.token);
+      if (!pending) {
+        await interaction.reply({
+          content: "This event form expired. Run `/event create` again.",
+          flags: MessageFlags.Ephemeral,
+        });
+        return true;
+      }
+      await interaction.showModal(
+        wizard.step === "schedule"
+          ? buildCreateEventScheduleModal(wizard.token)
+          : buildCreateEventAdmissionModal(wizard.token),
+      );
+      return true;
+    }
+
     const parsed = parseEventButton(interaction.customId);
     if (!parsed) return false;
 
@@ -680,19 +767,33 @@ export class EventController {
     }
   }
 
-  #ticketPriceCents(price: number | null): number | undefined {
-    if (price === null) return undefined;
-    const cents = Math.round(price * 100);
-
-    if (Math.abs(price * 100 - cents) > 1e-6) {
-      throw new Error("ticket_price can have at most two decimal places.");
+  #ticketPriceCents(input: string): number | undefined {
+    const value = input.trim();
+    if (!value) return undefined;
+    if (!/^\d+(?:\.\d{1,2})?$/.test(value)) {
+      throw new Error("Ticket price must be an AUD amount with up to two decimals.");
     }
-
+    const cents = Math.round(Number(value) * 100);
     if (cents < 50) {
-      throw new Error("ticket_price must be at least A$0.50.");
+      throw new Error("Ticket price must be at least A$0.50.");
     }
-
+    if (cents > 10_000_000) {
+      throw new Error("Ticket price cannot exceed A$100,000.");
+    }
     return cents;
+  }
+
+  #capacity(input: string): number | undefined {
+    const value = input.trim();
+    if (!value) return undefined;
+    if (!/^\d+$/.test(value)) {
+      throw new Error("Capacity must be a whole number.");
+    }
+    const capacity = Number(value);
+    if (capacity < 1 || capacity > 100_000) {
+      throw new Error("Capacity must be between 1 and 100,000.");
+    }
+    return capacity;
   }
 }
 
@@ -724,6 +825,19 @@ function parseEventButton(
   ];
 
   return actions.includes(action) ? { action, eventId } : undefined;
+}
+
+function parseEventWizardStep(customId: string):
+  | { step: "details" | "schedule" | "admission"; token: string }
+  | undefined {
+  const match = /^event:create:(details|schedule|admission):([a-f0-9]{32})$/.exec(
+    customId,
+  );
+  if (!match?.[1] || !match[2]) return undefined;
+  return {
+    step: match[1] as "details" | "schedule" | "admission",
+    token: match[2],
+  };
 }
 
 function safeAttachmentName(name: string): string {
@@ -765,16 +879,23 @@ function parseBrisbaneDateTime(value: string, optionName: string): number {
   );
 }
 
-function formatScheduleText(startsAt: number, endsAt: number): string {
+function optionalBrisbaneDateTime(
+  value: string,
+  fieldName: string,
+): number | undefined {
+  return value.trim() ? parseBrisbaneDateTime(value, fieldName) : undefined;
+}
+
+function formatScheduleText(startsAt: number, endsAt?: number): string {
   const formatter = new Intl.DateTimeFormat("en-AU", {
     timeZone: "Australia/Brisbane",
     dateStyle: "full",
     timeStyle: "short",
   });
-  return (
-    `${formatter.format(new Date(startsAt * 1000))} – ` +
-    `${formatter.format(new Date(endsAt * 1000))} (Brisbane)`
-  );
+  const start = formatter.format(new Date(startsAt * 1000));
+  return endsAt === undefined
+    ? `${start} (Brisbane)`
+    : `${start} – ${formatter.format(new Date(endsAt * 1000))} (Brisbane)`;
 }
 
 function parseAnnouncementLink(value: string):
