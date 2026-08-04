@@ -731,7 +731,8 @@ test("applies published-event edits and plans price-drop refunds", async () => {
     };
 
     const preview = await context.store.previewPriceDropRefunds(context.event.id, 1000);
-    assert.deepEqual(preview, { count: 1, totalCents: 250 });
+    // Fee estimate: 1.7% of A$12.50 (21c) + 30c fixed = 51c
+    assert.deepEqual(preview, { count: 1, totalCents: 250, feeEstimateCents: 51 });
 
     await assert.rejects(
       context.store.applyEventEdit({ ...pendingBase, ticket_price_cents: null }),
@@ -777,6 +778,7 @@ test("applies published-event edits and plans price-drop refunds", async () => {
       {
         count: 0,
         totalCents: 0,
+        feeEstimateCents: 0,
       },
     );
   } finally {

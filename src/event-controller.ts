@@ -666,7 +666,12 @@ export class EventController {
       );
       if (preview.count > 0) {
         await interaction.editReply(
-          buildEditRefundConfirm(pending, preview.totalCents, preview.count),
+          buildEditRefundConfirm(
+            pending,
+            preview.totalCents,
+            preview.count,
+            preview.feeEstimateCents,
+          ),
         );
         return;
       }
@@ -930,7 +935,12 @@ export class EventController {
       case "cancel": {
         const preview = await this.#store.previewPriceDropRefunds(event.id, 0);
         await interaction.editReply(
-          buildCancelConfirm(event, preview.count, preview.totalCents),
+          buildCancelConfirm(
+            event,
+            preview.count,
+            preview.totalCents,
+            preview.feeEstimateCents,
+          ),
         );
         return;
       }

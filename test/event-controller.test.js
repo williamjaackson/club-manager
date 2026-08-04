@@ -1075,7 +1075,7 @@ test("opens Stripe Checkout privately for an eligible paid-event member", async 
     },
   });
 
-  assert.match(reply.content, /reserved for about 30 minutes/);
+  assert.match(reply.content, /reserved for about 10 minutes/);
   assert.equal(
     reply.components[0].components[0].toJSON().url,
     "https://checkout.stripe.com/test",

@@ -350,3 +350,25 @@ test("announcements no longer carry an edited footer", () => {
   const edited = buildPublicEventMessage({ ...event, edited_at: 1_000 });
   assert.doesNotMatch(edited.content ?? "", /-# Edited/);
 });
+
+test("shows holds separately and estimates Stripe fees for admins", () => {
+  const paidEvent = {
+    ...event,
+    ticket_price_cents: 2000,
+    ticket_currency: "aud",
+    ticket_limit: 6,
+  };
+  const withHolds = buildPublicEventMessage(paidEvent, { going: 3, held: 1 });
+  assert.match(withHolds.content ?? "", /-# 🎟️ 2 sold · 1 on hold · 3 left/);
+
+  const noHolds = buildPublicEventMessage(paidEvent, { going: 2, held: 0 });
+  assert.match(noHolds.content ?? "", /-# 🎟️ 2 sold · 4 left/);
+  assert.doesNotMatch(noHolds.content ?? "", /on hold/);
+
+  // 1.7% of A$20.00 = 34c, + 30c = 64c fee → A$19.36 net
+  const preview = buildEventPreview(paidEvent);
+  assert.match(preview.content ?? "", /Est\. Stripe fee ~A\$0\.64\/ticket/);
+  assert.match(preview.content ?? "", /you receive ~A\$19\.36/);
+  // The fee line is admin guidance only — never on the public announcement.
+  assert.doesNotMatch(noHolds.content ?? "", /Stripe fee/);
+});

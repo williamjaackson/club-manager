@@ -26,6 +26,11 @@ export type TicketCheckoutResult =
 // ticket free and Stripe is bypassed entirely.
 const STRIPE_MINIMUM_CENTS = 50;
 
+// Stripe refuses Checkout Sessions expiring sooner than 30 minutes out. The
+// member's reservation is much shorter, so lapsed sessions are actively
+// expired by the sweeper below rather than by Stripe's own clock.
+const STRIPE_MIN_SESSION_SECONDS = 31 * 60;
+
 export function discountedPriceCents(priceCents: number, percentOff: number): number {
   return Math.round((priceCents * (100 - percentOff)) / 100);
 }
@@ -51,6 +56,7 @@ export class TicketingService {
   readonly #webhookSecret: string;
   readonly #testMode: StripeTestMode | undefined;
   readonly #onOrderChange: (eventId: number) => void;
+  #timer: NodeJS.Timeout | undefined;
 
   constructor(
     stripe: Stripe,
@@ -151,7 +157,7 @@ export class TicketingService {
         customer_creation: "always",
         success_url: `${this.#publicBaseUrl}/stripe/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${this.#publicBaseUrl}/stripe/cancel`,
-        expires_at: Math.floor(order.checkout_expires_at),
+        expires_at: currentTimestamp() + STRIPE_MIN_SESSION_SECONDS,
       },
       { idempotencyKey: `ticket-order-${order.id}-attempt-${order.attempt}` },
     );
@@ -264,6 +270,43 @@ export class TicketingService {
     }
 
     return { refunded, failed };
+  }
+
+  // Expires Stripe sessions whose short reservation lapsed, so stale
+  // payment links die and freed seats cannot be double-sold. Runs on a
+  // timer; never rejects.
+  async expireLapsedCheckouts(): Promise<void> {
+    try {
+      const lapsed = await this.#store.getLapsedCheckouts();
+      for (const order of lapsed) {
+        const stripe =
+          order.testMode && this.#testMode ? this.#testMode.stripe : this.#stripe;
+        try {
+          await stripe.checkout.sessions.expire(order.checkoutSessionId);
+        } catch (error) {
+          // Already-completed or already-expired sessions land here; the
+          // completed case is fulfilled by its webhook regardless.
+          console.warn(
+            `Could not expire checkout session for order ${order.orderId}`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+        await this.#store.markCheckoutExpired(order.orderId);
+      }
+    } catch (error) {
+      console.error("Failed to sweep lapsed checkouts", error);
+    }
+  }
+
+  start(intervalMs = 60_000): void {
+    if (this.#timer) return;
+    this.#timer = setInterval(() => void this.expireLapsedCheckouts(), intervalMs);
+    this.#timer.unref();
+  }
+
+  stop(): void {
+    if (this.#timer) clearInterval(this.#timer);
+    this.#timer = undefined;
   }
 
   async handleWebhook(
