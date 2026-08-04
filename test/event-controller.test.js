@@ -385,22 +385,42 @@ test("replies to an event announcement with a reusable admission button", async 
         return "@everyone Reminder this Saturday";
       },
     },
+    member: { displayName: "Admin", displayAvatarURL: () => "https://cdn/avatar.png" },
+    user: {
+      id: "32345678901234567",
+      globalName: "Admin",
+      username: "admin",
+      displayAvatarURL: () => "https://cdn/avatar.png",
+    },
     client: {
+      user: { id: "52345678901234567" },
       channels: {
         async fetch(channelId) {
           assert.equal(channelId, event.announcement_channel_id);
           return {
+            id: channelId,
             type: ChannelType.GuildText,
-            messages: {
-              async fetch(messageId) {
-                assert.equal(messageId, event.message_id);
-                return {
-                  async reply(options) {
-                    replyOptions = options;
-                    return reminder;
-                  },
-                };
-              },
+            async fetchWebhooks() {
+              return {
+                find(predicate) {
+                  const webhook = {
+                    name: "Club Manager Event Announcements",
+                    owner: { id: "52345678901234567" },
+                    token: "webhook-token",
+                    isIncoming() {
+                      return true;
+                    },
+                    async send(options) {
+                      replyOptions = options;
+                      return reminder;
+                    },
+                    async deleteMessage() {
+                      assert.fail("successful reminders must not be deleted");
+                    },
+                  };
+                  return predicate(webhook) ? webhook : undefined;
+                },
+              };
             },
           };
         },
@@ -414,7 +434,13 @@ test("replies to an event announcement with a reusable admission button", async 
     },
   });
 
-  assert.equal(replyOptions.content, "@everyone Reminder this Saturday");
+  assert.equal(
+    replyOptions.content,
+    `https://discord.com/channels/${event.guild_id}/${event.announcement_channel_id}/${event.message_id}\n` +
+      "@everyone Reminder this Saturday",
+  );
+  assert.equal(replyOptions.username, "Admin");
+  assert.equal(replyOptions.withComponents, true);
   assert.equal(
     replyOptions.components[0].components[0].toJSON().custom_id,
     `event:rsvp:${event.id}`,
@@ -1013,6 +1039,12 @@ test("opens Stripe Checkout privately for an eligible paid-event member", async 
           { eventId: event.id, userId: "52345678901234567", kind: "ticket" },
         );
         return true;
+      },
+      async getTicketOrderForMember() {
+        return undefined;
+      },
+      async findBestCoupon() {
+        return undefined;
       },
     },
     { async flush() {} },

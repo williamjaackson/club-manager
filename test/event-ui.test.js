@@ -3,6 +3,7 @@ import test from "node:test";
 import { ButtonStyle } from "discord.js";
 import {
   buildCancellationComplete,
+  buildCouponChoice,
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
@@ -305,4 +306,47 @@ test("shows live attendance and sold-out states on announcements", () => {
   assert.match(freeFull.content ?? "", /-# 🙋 5 going · none left/);
   assert.equal(fullButton?.label, "At capacity");
   assert.equal(fullButton?.disabled, true);
+});
+
+test("offers coupon choice with save only for transferable coupons", () => {
+  const paidEvent = { ...event, ticket_price_cents: 2000, ticket_currency: "aud" };
+  const anywhere = buildCouponChoice(
+    paidEvent,
+    { percent_off: 25, event_id: null, expires_at: 1_000 },
+    1500,
+  );
+  const scoped = buildCouponChoice(
+    paidEvent,
+    { percent_off: 100, event_id: 42, expires_at: null },
+    0,
+  );
+
+  const anywhereButtons = anywhere.components?.[0]?.components.map((b) => b.toJSON());
+  assert.equal(anywhereButtons?.length, 2);
+  assert.match(anywhereButtons?.[0]?.label ?? "", /Apply coupon — pay A\$15\.00/);
+  assert.match(anywhereButtons?.[1]?.label ?? "", /Save coupon — pay A\$20\.00/);
+  assert.match(anywhere.content ?? "", /expires <t:1000:R>/);
+
+  const scopedButtons = scoped.components?.[0]?.components.map((b) => b.toJSON());
+  assert.equal(scopedButtons?.length, 1, "event-scoped coupons cannot be saved");
+  assert.match(scopedButtons?.[0]?.label ?? "", /free ticket/);
+  assert.match(scoped.content ?? "", /this event only/);
+  assert.match(scoped.content ?? "", /\*\*FREE\*\*/);
+});
+
+test("skips the receipt line for coupon-covered and test tickets", () => {
+  const paidEvent = { ...event, ticket_price_cents: 2000, ticket_currency: "aud" };
+
+  assert.match(
+    buildTicketConfirmed(paidEvent).content ?? "",
+    /Stripe has emailed your receipt/,
+  );
+  const free = buildTicketConfirmed(paidEvent, { freeViaCoupon: true }).content ?? "";
+  assert.doesNotMatch(free, /receipt/);
+  assert.match(free, /coupon covered the full price/);
+});
+
+test("announcements no longer carry an edited footer", () => {
+  const edited = buildPublicEventMessage({ ...event, edited_at: 1_000 });
+  assert.doesNotMatch(edited.content ?? "", /-# Edited/);
 });
