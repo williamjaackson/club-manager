@@ -14,6 +14,8 @@ test("creates a paid multi-day test event through the persistent wizard", async 
   };
   let pending;
   let createdDraft;
+  let createdEvent;
+  let discardedDraftId;
   let modal;
   let response;
   const store = {
@@ -22,20 +24,22 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         token: value.token,
         user_id: value.userId,
         guild_id: value.guildId,
-        announcement_channel_id: null,
-        title: null,
-        location: null,
-        location_url: null,
-        announcement: null,
-        artwork_url: null,
-        artwork_name: null,
-        starts_at: null,
-        ends_at: null,
-        ticket_sales_close_at: null,
-        ticket_price_cents: null,
-        ticket_currency: null,
-        ticket_limit: null,
-        test_mode: false,
+        edit_event_id: value.editEventId ?? null,
+        announcement_channel_id: value.announcementChannelId ?? null,
+        title: value.title ?? null,
+        location: value.location ?? null,
+        location_url: value.locationUrl ?? null,
+        announcement: value.announcement ?? null,
+        artwork_url: value.artworkUrl ?? null,
+        artwork_name: value.artworkName ?? null,
+        starts_at: value.startsAt ?? null,
+        ends_at: value.endsAt ?? null,
+        ticket_sales_close_at: value.ticketSalesCloseAt ?? null,
+        ticket_price_cents: value.ticketPriceCents ?? null,
+        ticket_currency: value.ticketCurrency ?? null,
+        ticket_limit: value.ticketLimit ?? null,
+        test_mode: value.testMode ?? false,
+        admission_set: value.admissionSet ?? false,
       };
     },
     async getPendingEventCreate() {
@@ -70,6 +74,7 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         ticket_currency: admission.ticketCurrency ?? null,
         ticket_limit: admission.ticketLimit ?? null,
         test_mode: admission.testMode,
+        admission_set: true,
       });
       return true;
     },
@@ -78,9 +83,16 @@ test("creates a paid multi-day test event through the persistent wizard", async 
       pending = undefined;
       return value;
     },
+    async getEvent(id) {
+      return createdEvent?.id === id ? createdEvent : undefined;
+    },
+    async discardEventDraft(id) {
+      discardedDraftId = id;
+      return true;
+    },
     async createEventDraft(draft) {
       createdDraft = draft;
-      return {
+      createdEvent = {
         id: 42,
         guild_id: draft.guildId,
         announcement_channel_id: draft.announcementChannelId,
@@ -103,6 +115,7 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         created_at: 100,
         published_at: null,
       };
+      return createdEvent;
     },
   };
   const controller = new EventController(store, {});
@@ -222,9 +235,13 @@ test("creates a paid multi-day test event through the persistent wizard", async 
   assert.match(response.content, new RegExp(`<t:${pending.starts_at}:F>`));
   assert.equal(
     response.components[1].components[0].toJSON().disabled,
-    false,
-    "finish enabled once required fields exist",
+    true,
+    "finish stays disabled until the admission step is saved",
   );
+  const midButtons = response.components[0].components.map((b) => b.toJSON());
+  assert.equal(midButtons[0].emoji?.name, "✅", "details completed");
+  assert.equal(midButtons[1].emoji?.name, "✅", "schedule completed");
+  assert.equal(midButtons[2].emoji?.name, "✏️", "admission still pending");
 
   await controller.handleButton({
     ...baseInteraction,
@@ -253,6 +270,18 @@ test("creates a paid multi-day test event through the persistent wizard", async 
     },
   });
 
+  assert.equal(
+    response.components[1].components[0].toJSON().disabled,
+    false,
+    "finish unlocks once every step is complete",
+  );
+  assert.ok(
+    response.components[0].components.every(
+      (button) => button.toJSON().emoji?.name === "✅",
+    ),
+    "all steps show completed",
+  );
+
   await controller.handleButton({
     ...baseInteraction,
     customId: response.components[1].components[0].toJSON().custom_id,
@@ -263,13 +292,42 @@ test("creates a paid multi-day test event through the persistent wizard", async 
   });
 
   assert.equal(pending, undefined);
+
+  // The preview offers an Edit button that reopens a fully seeded form.
+  const previewResponse = response;
+  const previewButtons = response.components[0].components.map((b) => b.toJSON());
+  assert.deepEqual(
+    previewButtons.map(({ custom_id }) => custom_id.split(":")[1]),
+    ["publish", "edit-draft", "discard"],
+  );
+  await controller.handleButton({
+    ...baseInteraction,
+    customId: previewButtons[1].custom_id,
+    async deferUpdate() {},
+    async editReply(options) {
+      response = options;
+    },
+  });
+  assert.equal(discardedDraftId, 42, "reopening discards the old draft row");
+  assert.ok(
+    response.components[0].components.every(
+      (button) => button.toJSON().emoji?.name === "✅",
+    ),
+    "reopened form counts every step as complete",
+  );
+  assert.equal(
+    response.components[1].components[0].toJSON().disabled,
+    false,
+    "reopened form can be finished immediately",
+  );
+
   assert.equal(createdDraft.ticketPriceCents, 1250);
   assert.equal(createdDraft.locationUrl, "https://maps.app.goo.gl/club123");
   assert.equal(createdDraft.ticketLimit, 50);
   assert.equal(createdDraft.testMode, true);
   assert.ok(createdDraft.endsAt > createdDraft.startsAt);
   assert.match(createdDraft.scheduleText, /8 August 2099.*10 August 2099/);
-  assert.equal(response.files[0].name, artwork.name);
+  assert.equal(previewResponse.files[0].name, artwork.name);
 });
 
 test("replies to an event announcement with a reusable admission button", async () => {

@@ -87,6 +87,7 @@ export interface PendingEventCreateRecord {
   created_at: number;
   expires_at: number;
   edit_event_id: number | null;
+  admission_set: boolean;
 }
 
 export interface NewPendingEventCreate {
@@ -94,6 +95,7 @@ export interface NewPendingEventCreate {
   userId: string;
   guildId: string;
   editEventId?: number;
+  admissionSet?: boolean;
   locationUrl?: string;
   announcementChannelId?: string;
   title?: string;
@@ -359,7 +361,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ticket_sales_close_at DOUBLE PRECISION,
         created_at DOUBLE PRECISION NOT NULL,
         expires_at DOUBLE PRECISION NOT NULL,
-        edit_event_id INTEGER
+        edit_event_id INTEGER,
+        admission_set BOOLEAN NOT NULL DEFAULT FALSE
       );
 
       ALTER TABLE pending_event_creates
@@ -382,6 +385,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS location_url TEXT;
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS edit_event_id INTEGER;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS admission_set BOOLEAN NOT NULL DEFAULT FALSE;
 
       CREATE TABLE IF NOT EXISTS ticket_orders (
         id SERIAL PRIMARY KEY,
@@ -780,10 +785,11 @@ export class Store {
           created_at,
           expires_at,
           edit_event_id,
-          location_url
+          location_url,
+          admission_set
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9,
-          $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+          $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
         )
       `,
       [
@@ -807,6 +813,7 @@ export class Store {
         now + lifetimeSeconds,
         pending.editEventId ?? null,
         pending.locationUrl ?? null,
+        pending.admissionSet ?? false,
       ],
     );
   }
@@ -885,6 +892,27 @@ export class Store {
     return result.rowCount === 1;
   }
 
+  async clearPendingArtwork(
+    token: string,
+    userId: string,
+    guildId: string | null,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE pending_event_creates
+        SET artwork_url = NULL, artwork_name = NULL
+        WHERE
+          token = $1
+          AND user_id = $2
+          AND guild_id = $3
+          AND expires_at > $4
+      `,
+      [token, userId, guildId, now],
+    );
+    return result.rowCount === 1;
+  }
+
   async updatePendingEventAdmission(
     token: string,
     userId: string,
@@ -899,7 +927,8 @@ export class Store {
           ticket_price_cents = $1,
           ticket_currency = $2,
           ticket_limit = $3,
-          test_mode = $4
+          test_mode = $4,
+          admission_set = TRUE
         WHERE
           token = $5
           AND user_id = $6

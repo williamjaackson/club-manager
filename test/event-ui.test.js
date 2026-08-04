@@ -262,7 +262,7 @@ test("collapses same-day schedules and links Google Maps locations", () => {
   assert.doesNotMatch(sameDay.content ?? "", /Starts:|Finishes:/);
   assert.match(
     sameDay.content ?? "",
-    /📍 \[\*\*In person, Gold Coast — room TBD\*\*\]\(https:\/\/maps\.app\.goo\.gl\/club123\)/,
+    /📍 \[\*\*In person, Gold Coast — room TBD\*\*\]\(<https:\/\/maps\.app\.goo\.gl\/club123>\)/,
   );
 
   assert.match(multiDay.content ?? "", /\*\*Starts:\*\* <t:2000:F>/);
