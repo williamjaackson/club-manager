@@ -63,3 +63,21 @@ export function isSameBrisbaneDay(a: number, b: number): boolean {
   });
   return formatter.format(new Date(a * 1000)) === formatter.format(new Date(b * 1000));
 }
+
+// Formats an epoch back into the wizard's "YYYY-MM-DD HH:mm" input format.
+export function formatBrisbaneDateTimeInput(timestamp: number): string {
+  const date = new Date(timestamp * 1000);
+  const day = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BRISBANE_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: BRISBANE_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+  return `${day} ${time}`;
+}

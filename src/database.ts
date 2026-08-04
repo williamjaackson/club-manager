@@ -117,6 +117,13 @@ export interface PendingEventSchedule {
   locationUrl?: string;
 }
 
+export interface PendingEventAdmission {
+  ticketPriceCents?: number;
+  ticketCurrency?: string;
+  ticketLimit?: number;
+  testMode: boolean;
+}
+
 export interface TicketOrderRecord {
   id: number;
   event_id: number;
@@ -747,8 +754,8 @@ export class Store {
           title = $2,
           location = $3,
           announcement = $4,
-          artwork_url = $5,
-          artwork_name = $6
+          artwork_url = COALESCE($5, artwork_url),
+          artwork_name = COALESCE($6, artwork_name)
         WHERE
           token = $7
           AND user_id = $8
@@ -797,6 +804,41 @@ export class Store {
         schedule.endsAt ?? null,
         schedule.ticketSalesCloseAt ?? null,
         schedule.locationUrl ?? null,
+        token,
+        userId,
+        guildId,
+        now,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async updatePendingEventAdmission(
+    token: string,
+    userId: string,
+    guildId: string | null,
+    admission: PendingEventAdmission,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE pending_event_creates
+        SET
+          ticket_price_cents = $1,
+          ticket_currency = $2,
+          ticket_limit = $3,
+          test_mode = $4
+        WHERE
+          token = $5
+          AND user_id = $6
+          AND guild_id = $7
+          AND expires_at > $8
+      `,
+      [
+        admission.ticketPriceCents ?? null,
+        admission.ticketCurrency ?? null,
+        admission.ticketLimit ?? null,
+        admission.testMode,
         token,
         userId,
         guildId,
