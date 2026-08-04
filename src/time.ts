@@ -81,3 +81,18 @@ export function formatBrisbaneDateTimeInput(timestamp: number): string {
   }).format(date);
   return `${day} ${time}`;
 }
+
+// Parses "30m", "12h", "2d" (single unit) into seconds.
+export function parseDurationSeconds(value: string, fieldName: string): number {
+  const match = /^(\d+)\s*(m|h|d)$/i.exec(value.trim());
+  if (!match?.[1] || !match[2]) {
+    throw new Error(`${fieldName} must look like 30m, 12h, or 2d.`);
+  }
+  const amount = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const seconds = amount * (unit === "m" ? 60 : unit === "h" ? 3600 : 86_400);
+  if (seconds < 5 * 60 || seconds > 14 * 86_400) {
+    throw new Error(`${fieldName} must be between 5 minutes and 14 days.`);
+  }
+  return seconds;
+}

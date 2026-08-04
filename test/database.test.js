@@ -1076,3 +1076,108 @@ test("lists coupons newest first and revokes only unredeemed ones", async () => 
     await context.close();
   }
 });
+
+test("holds seats for members and converts holds into checkouts", async () => {
+  const context = await fixture({
+    ticketPriceCents: 2000,
+    ticketCurrency: "aud",
+    ticketLimit: 1,
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+
+    const hold = await context.store.createTicketHold(
+      context.event.id,
+      "52345678901234567",
+      10_000,
+      300,
+    );
+    assert.equal(hold.status, "pending");
+    assert.equal(hold.admin_hold, true);
+    assert.equal(hold.reservation_expires_at, 10_000);
+
+    // The hold occupies the only seat and shows as on hold.
+    assert.deepEqual(await context.store.getEventAttendance(context.event.id, 400), {
+      going: 1,
+      held: 1,
+    });
+    await assert.rejects(
+      context.store.reserveTicketCheckout(context.event.id, "62345678901234567", 400),
+      TicketSoldOutError,
+    );
+    await assert.rejects(
+      context.store.createTicketHold(context.event.id, "62345678901234567", 10_000, 400),
+      TicketSoldOutError,
+    );
+
+    // The held member converts the hold into a live checkout without losing
+    // the long reservation.
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      500,
+      600,
+      60,
+    );
+    assert.equal(reservation.alreadyPaid, false);
+    assert.equal(reservation.order.id, hold.id);
+    assert.equal(reservation.order.checkout_expires_at, 1_100);
+    assert.equal(
+      reservation.order.reservation_expires_at,
+      10_000,
+      "hold expiry outlives the checkout window",
+    );
+
+    // Release refuses while a checkout session is live, then succeeds.
+    await context.store.attachTicketCheckout(
+      hold.id,
+      reservation.order.attempt,
+      "cs_hold_test",
+      "https://checkout.stripe.com/test",
+      501,
+    );
+    assert.equal(
+      await context.store.releaseTicketHold(context.event.id, "52345678901234567"),
+      false,
+    );
+    await context.store.markCheckoutExpired(hold.id, 1_200);
+    assert.equal(
+      await context.store.releaseTicketHold(context.event.id, "52345678901234567"),
+      true,
+    );
+    assert.deepEqual(await context.store.getEventAttendance(context.event.id, 1_300), {
+      going: 0,
+      held: 0,
+    });
+
+    // Holding again after a paid ticket is refused.
+    const fresh = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      1_400,
+      600,
+      60,
+    );
+    await context.store.attachTicketCheckout(
+      fresh.order.id,
+      fresh.order.attempt,
+      "cs_hold_paid",
+      "https://checkout.stripe.com/test",
+      1_401,
+    );
+    await context.store.fulfillTicketOrder(
+      fresh.order.id,
+      "cs_hold_paid",
+      { amountTotal: 2000, currency: "aud" },
+      1_500,
+    );
+    await assert.rejects(
+      context.store.createTicketHold(context.event.id, "52345678901234567", 9_999, 1_600),
+      /already has a paid ticket/,
+    );
+  } finally {
+    await context.close();
+  }
+});

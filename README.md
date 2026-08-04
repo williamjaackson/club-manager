@@ -61,6 +61,16 @@ under Stripe's A$0.50 minimum (including 100% off) skip Stripe entirely and
 confirm the ticket for free. Each coupon can be used once; the highest
 applicable discount wins.
 
+Run `/ticket hold member:<member> event:<announcement link>` to hold a seat
+on a paid event for a specific member — for example an exec who should not
+lose their spot before they get a chance to book. The hold counts toward
+capacity and shows in the announcement's "on hold" figure, so nobody else can
+take the seat, and the member is DMed. Set the length with `for:<30m/12h/2d>`
+or `until:<YYYY-MM-DD HH:mm>` Brisbane time; with neither, the hold lasts
+until admission closes. The member buys normally (coupons still apply) and
+the hold simply converts into their checkout. `/ticket release` frees a held
+seat early, unless a checkout is mid-flight.
+
 Run `/coupon list` to browse issued coupons, newest first, with the same
 paginated management interface as `/event list`: pick a coupon to see its
 member, discount, scope, expiry, and status, and revoke it if it hasn't been
