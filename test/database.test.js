@@ -859,3 +859,134 @@ test("lists, cancels, and deletes events with cascading cleanup", async () => {
     await context.close();
   }
 });
+
+test("issues, targets, and redeems coupons exactly once", async () => {
+  const context = await fixture({
+    ticketPriceCents: 2000,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+
+    const scoped = await context.store.createCoupon(
+      {
+        guildId: context.event.guild_id,
+        userId: "52345678901234567",
+        percentOff: 25,
+        eventId: context.event.id,
+        createdBy: "32345678901234567",
+      },
+      300,
+    );
+    const anywhere = await context.store.createCoupon(
+      {
+        guildId: context.event.guild_id,
+        userId: "52345678901234567",
+        percentOff: 10,
+        createdBy: "32345678901234567",
+        expiresAt: 1_000,
+      },
+      301,
+    );
+
+    const best = await context.store.findBestCoupon(
+      context.event.guild_id,
+      "52345678901234567",
+      context.event.id,
+      400,
+    );
+    assert.equal(best?.id, scoped.id);
+
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      400,
+    );
+    const attached = await context.store.attachTicketCheckout(
+      reservation.order.id,
+      reservation.order.attempt,
+      "cs_coupon_test",
+      "https://checkout.stripe.com/test",
+      401,
+    );
+    await context.store.fulfillTicketOrder(
+      attached.id,
+      "cs_coupon_test",
+      {
+        paymentIntentId: "pi_coupon_test",
+        amountTotal: 1500,
+        currency: "aud",
+        couponId: scoped.id,
+      },
+      500,
+    );
+
+    const after = await context.store.findBestCoupon(
+      context.event.guild_id,
+      "52345678901234567",
+      context.event.id,
+      600,
+    );
+    assert.equal(after?.id, anywhere.id, "redeemed coupon no longer matches");
+
+    // Expired coupons never match: past its expiry the remaining coupon is gone.
+    assert.equal(
+      await context.store.findBestCoupon(
+        context.event.guild_id,
+        "52345678901234567",
+        context.event.id,
+        2_000,
+      ),
+      undefined,
+    );
+
+    const order = await context.store.getTicketOrder(attached.id);
+    assert.equal(order?.amount_total, 1500);
+  } finally {
+    await context.close();
+  }
+});
+
+test("fulfills a fully discounted order without Stripe", async () => {
+  const context = await fixture({
+    ticketPriceCents: 500,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    const coupon = await context.store.createCoupon({
+      guildId: context.event.guild_id,
+      userId: "52345678901234567",
+      percentOff: 100,
+      createdBy: "32345678901234567",
+    });
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+
+    const order = await context.store.fulfillCouponFreeOrder(
+      reservation.order.id,
+      coupon.id,
+      400,
+    );
+    assert.equal(order.status, "paid");
+    assert.equal(order.amount_total, 0);
+
+    await assert.rejects(
+      context.store.fulfillCouponFreeOrder(reservation.order.id, coupon.id, 401),
+      /already been used/,
+    );
+
+    const audits = await context.store.getPendingAudit(500);
+    const paid = audits.find(({ action }) => action === "ticket_paid");
+    assert.equal(paid?.detail, "Free with coupon.");
+  } finally {
+    await context.close();
+  }
+});

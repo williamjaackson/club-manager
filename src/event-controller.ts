@@ -114,6 +114,11 @@ export class EventController {
       return true;
     }
 
+    if (interaction.commandName === "coupon") {
+      await this.#giveCoupon(interaction);
+      return true;
+    }
+
     if (interaction.commandName === "config") {
       this.#requireAdministrator(interaction);
       if (!interaction.guildId) {
@@ -698,6 +703,75 @@ export class EventController {
     });
   }
 
+  async #giveCoupon(interaction: ChatInputCommandInteraction): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Coupons can only be given inside a server.");
+    }
+    if (interaction.options.getSubcommand() !== "give") {
+      throw new Error("Unknown coupon subcommand.");
+    }
+
+    const member = interaction.options.getUser("member", true);
+    const percentOff = interaction.options.getInteger("percent", true);
+    const eventLink = interaction.options.getString("event")?.trim();
+    const expiresInput = interaction.options.getString("expires")?.trim();
+
+    const expiresAt = expiresInput
+      ? parseBrisbaneDateTime(expiresInput, "Expiry")
+      : undefined;
+    if (expiresAt !== undefined && expiresAt <= currentTimestamp()) {
+      throw new Error("Expiry must be in the future.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    let event: EventRecord | undefined;
+    if (eventLink) {
+      const link = parseAnnouncementLink(eventLink);
+      if (!link || link.guildId !== interaction.guildId) {
+        throw new Error("Paste an event announcement link from this server.");
+      }
+      event = await this.#store.getEventByMessageId(interaction.guildId, link.messageId);
+      if (event?.status !== "published") {
+        throw new Error("That link is not a published event announcement.");
+      }
+      if (event.ticket_price_cents === null) {
+        throw new Error("Coupons only apply to paid events.");
+      }
+    }
+
+    const coupon = await this.#store.createCoupon({
+      guildId: interaction.guildId,
+      userId: member.id,
+      percentOff,
+      ...(event ? { eventId: event.id } : {}),
+      createdBy: interaction.user.id,
+      ...(expiresAt !== undefined ? { expiresAt } : {}),
+    });
+
+    const scope = event ? `**${event.title}**` : "any paid event in the server";
+    const expiry =
+      coupon.expires_at === null ? "" : ` It expires <t:${coupon.expires_at}:F>.`;
+    let delivery = "The member has been notified by DM.";
+    try {
+      const user = await interaction.client.users.fetch(member.id);
+      await user.send(
+        `🎁 You've been given a **${percentOff}% off** coupon for ${scope}.` +
+          `${expiry} It applies automatically at your next checkout.`,
+      );
+    } catch {
+      delivery = "⚠️ The member could not be DMed (privacy settings).";
+    }
+
+    await interaction.editReply({
+      content:
+        `✅ Gave <@${member.id}> a **${percentOff}% off** coupon for ${scope}.` +
+        `${expiry} ${delivery}`,
+      components: [],
+    });
+  }
+
   async #handleAdminAction(
     interaction: ButtonInteraction,
     action: EventAdminAction,
@@ -1171,7 +1245,7 @@ export class EventController {
     await interaction.editReply(
       checkout.alreadyPaid
         ? buildTicketConfirmed(event)
-        : buildTicketCheckout(event, checkout.checkoutUrl),
+        : buildTicketCheckout(event, checkout.checkoutUrl, checkout.discount),
     );
   }
 

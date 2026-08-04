@@ -178,6 +178,19 @@ export interface RsvpChange {
   status: RsvpStatus;
 }
 
+export interface CouponRecord {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  percent_off: number;
+  event_id: number | null;
+  created_by: string;
+  created_at: number;
+  expires_at: number | null;
+  redeemed_order_id: number | null;
+  redeemed_at: number | null;
+}
+
 export interface EventAttendeeRecord {
   userId: string;
   customerName: string | null;
@@ -464,6 +477,23 @@ export async function setupDatabase(pool: Pool): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
         ON audit_outbox (sent_at, next_attempt_at, id);
+
+      CREATE TABLE IF NOT EXISTS coupons (
+        id SERIAL PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        percent_off INTEGER NOT NULL
+          CHECK (percent_off >= 1 AND percent_off <= 100),
+        event_id INTEGER REFERENCES events(id),
+        created_by TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        expires_at DOUBLE PRECISION,
+        redeemed_order_id INTEGER,
+        redeemed_at DOUBLE PRECISION
+      );
+
+      CREATE INDEX IF NOT EXISTS coupons_member
+        ON coupons (guild_id, user_id, redeemed_at);
 
       CREATE TABLE IF NOT EXISTS guild_settings (
         guild_id TEXT PRIMARY KEY,
@@ -1203,6 +1233,7 @@ export class Store {
       customerName?: string;
       amountTotal: number;
       currency: string;
+      couponId?: number;
     },
     now = currentTimestamp(),
   ): Promise<boolean> {
@@ -1267,6 +1298,24 @@ export class Store {
           orderId,
         ],
       );
+      if (details.couponId !== undefined) {
+        const redeemed = await client.query(
+          `
+            UPDATE coupons
+            SET redeemed_order_id = $1, redeemed_at = $2
+            WHERE id = $3 AND redeemed_at IS NULL
+          `,
+          [orderId, now, details.couponId],
+        );
+        if (redeemed.rowCount !== 1) {
+          // The member already paid the discounted amount; never fail the
+          // fulfillment over a stale coupon — just record it loudly.
+          console.warn(
+            `Coupon ${details.couponId} was already redeemed when order ` +
+              `${orderId} was fulfilled`,
+          );
+        }
+      }
       await client.query(
         `
           INSERT INTO audit_outbox (
@@ -1660,6 +1709,120 @@ export class Store {
     }
   }
 
+  async createCoupon(
+    coupon: {
+      guildId: string;
+      userId: string;
+      percentOff: number;
+      eventId?: number;
+      createdBy: string;
+      expiresAt?: number;
+    },
+    now = currentTimestamp(),
+  ): Promise<CouponRecord> {
+    const result = await this.#pool.query(
+      `
+        INSERT INTO coupons (
+          guild_id, user_id, percent_off, event_id,
+          created_by, created_at, expires_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING *
+      `,
+      [
+        coupon.guildId,
+        coupon.userId,
+        coupon.percentOff,
+        coupon.eventId ?? null,
+        coupon.createdBy,
+        now,
+        coupon.expiresAt ?? null,
+      ],
+    );
+    return result.rows[0] as CouponRecord;
+  }
+
+  // The member's best live coupon for this event: unredeemed, unexpired,
+  // and either event-scoped or valid anywhere. Highest discount wins.
+  async findBestCoupon(
+    guildId: string,
+    userId: string,
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<CouponRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        SELECT *
+        FROM coupons
+        WHERE
+          guild_id = $1
+          AND user_id = $2
+          AND redeemed_at IS NULL
+          AND (expires_at IS NULL OR expires_at > $3)
+          AND (event_id IS NULL OR event_id = $4)
+        ORDER BY percent_off DESC, id
+        LIMIT 1
+      `,
+      [guildId, userId, now, eventId],
+    );
+    return result.rows[0] as CouponRecord | undefined;
+  }
+
+  // Fulfills a 100%-off (or sub-minimum) order without Stripe: the order is
+  // paid at zero, the coupon is redeemed, and the usual notification queues.
+  async fulfillCouponFreeOrder(
+    orderId: number,
+    couponId: number,
+    now = currentTimestamp(),
+  ): Promise<TicketOrderRecord> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const redeemed = await client.query(
+        `
+          UPDATE coupons
+          SET redeemed_order_id = $1, redeemed_at = $2
+          WHERE id = $3 AND redeemed_at IS NULL
+        `,
+        [orderId, now, couponId],
+      );
+      if (redeemed.rowCount !== 1) {
+        throw new Error("That coupon has already been used.");
+      }
+
+      const result = await client.query(
+        `
+          UPDATE ticket_orders
+          SET status = 'paid', amount_total = 0, updated_at = $1, paid_at = $1
+          WHERE id = $2 AND status = 'pending'
+          RETURNING *
+        `,
+        [now, orderId],
+      );
+      const order = result.rows[0] as TicketOrderRecord | undefined;
+      if (!order) {
+        throw new Error("This ticket reservation is no longer active.");
+      }
+
+      await client.query(
+        `
+          INSERT INTO audit_outbox (
+            event_id, user_id, action, detail, created_at, next_attempt_at
+          ) VALUES ($1, $2, 'ticket_paid', 'Free with coupon.', $3, $4)
+        `,
+        [order.event_id, order.user_id, now, now],
+      );
+
+      await client.query("COMMIT");
+      return order;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listEvents(
     guildId: string,
     offset: number,
@@ -1839,6 +2002,7 @@ export class Store {
     try {
       await client.query("BEGIN");
       await client.query("DELETE FROM audit_outbox WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM coupons WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM ticket_orders WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM rsvps WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM rsvp_history WHERE event_id = $1", [eventId]);
