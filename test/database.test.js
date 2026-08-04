@@ -142,7 +142,23 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(
       await context.store.refundTicketOrderByPaymentIntent(
         "pi_test_ticket",
-        { chargeId: "ch_test_ticket", refundId: "re_test_ticket" },
+        {
+          chargeId: "ch_test_ticket",
+          refundId: "re_test_ticket",
+          testMode: true,
+        },
+        449,
+      ),
+      false,
+    );
+    assert.equal(
+      await context.store.refundTicketOrderByPaymentIntent(
+        "pi_test_ticket",
+        {
+          chargeId: "ch_test_ticket",
+          refundId: "re_test_ticket",
+          testMode: false,
+        },
         450,
       ),
       true,
@@ -150,7 +166,11 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
     assert.equal(
       await context.store.refundTicketOrderByPaymentIntent(
         "pi_test_ticket",
-        { chargeId: "ch_test_ticket", refundId: "re_test_ticket" },
+        {
+          chargeId: "ch_test_ticket",
+          refundId: "re_test_ticket",
+          testMode: false,
+        },
         451,
       ),
       false,
@@ -352,6 +372,7 @@ test("keeps open event forms across database pool restarts", async () => {
         ticketPriceCents: 1250,
         ticketCurrency: "aud",
         ticketLimit: 50,
+        testMode: true,
       },
       100,
       900,
@@ -371,6 +392,7 @@ test("keeps open event forms across database pool restarts", async () => {
     assert.equal(pending?.ticket_price_cents, 1250);
     assert.equal(pending?.ticket_currency, "aud");
     assert.equal(pending?.ticket_limit, 50);
+    assert.equal(pending?.test_mode, true);
     assert.equal(
       await store.getPendingEventCreate("persistent-form", 1_000),
       undefined,

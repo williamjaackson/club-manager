@@ -8,6 +8,10 @@ function required(name: string): string {
   return value;
 }
 
+function optional(name: string): string | undefined {
+  return process.env[name]?.trim() || undefined;
+}
+
 function port(value: string | undefined): number {
   const parsed = Number(value ?? "3000");
 
@@ -46,6 +50,8 @@ export const config = {
   publicBaseUrl: publicUrl(required("PUBLIC_BASE_URL")),
   stripeSecretKey: required("STRIPE_SECRET_KEY"),
   stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
+  stripeTestSecretKey: optional("STRIPE_TEST_SECRET_KEY"),
+  stripeTestWebhookSecret: optional("STRIPE_TEST_WEBHOOK_SECRET"),
   rsvpLogChannelId: snowflake(
     "RSVP_LOG_CHANNEL_ID",
     "1530755171645132921",

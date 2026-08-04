@@ -138,6 +138,28 @@ test("adds paid ticket pricing and secure Checkout to paid events", () => {
   );
 });
 
+test("clearly labels Stripe test-mode events and checkout", () => {
+  const testEvent = {
+    ...event,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 50,
+    test_mode: true,
+  };
+  const publicMessage = buildPublicEventMessage(testEvent);
+  const publicButton = publicMessage.components?.[0]?.components[0]?.toJSON();
+  const checkout = buildTicketCheckout(
+    testEvent,
+    "https://checkout.stripe.com/test",
+  );
+  const checkoutButton = checkout.components?.[0]?.components[0]?.toJSON();
+
+  assert.match(publicMessage.content ?? "", /TEST EVENT.*NO REAL MONEY/i);
+  assert.equal(publicButton?.label, "Test checkout — A$12.50");
+  assert.match(checkout.content ?? "", /No real money will be charged/i);
+  assert.equal(checkoutButton?.label, "Open Stripe test checkout");
+});
+
 test("uses plain message text throughout the event flow", () => {
   const messages = [
     buildEventPreview(event),

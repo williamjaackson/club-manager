@@ -36,7 +36,11 @@ export function createHttpServer(
       return;
     }
 
-    if (request.method === "POST" && url.pathname === "/stripe/webhook") {
+    if (
+      request.method === "POST" &&
+      (url.pathname === "/stripe/webhook" ||
+        url.pathname === "/stripe/test-webhook")
+    ) {
       try {
         const signature = request.headers["stripe-signature"];
 
@@ -47,7 +51,11 @@ export function createHttpServer(
         }
 
         const payload = await readBody(request);
-        await ticketing.handleWebhook(payload, signature);
+        await ticketing.handleWebhook(
+          payload,
+          signature,
+          url.pathname === "/stripe/test-webhook" ? "test" : "primary",
+        );
         response.writeHead(200).end("Received\n");
       } catch (error) {
         if (error instanceof InvalidStripeWebhookError) {

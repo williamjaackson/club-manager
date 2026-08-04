@@ -31,6 +31,7 @@ export interface EventRecord {
   ticket_price_cents: number | null;
   ticket_currency: string | null;
   ticket_limit: number | null;
+  test_mode: boolean;
   status: EventStatus;
   created_at: number;
   published_at: number | null;
@@ -49,6 +50,7 @@ export interface NewEventDraft {
   ticketPriceCents?: number;
   ticketCurrency?: string;
   ticketLimit?: number;
+  testMode?: boolean;
 }
 
 export interface PendingEventCreateRecord {
@@ -60,6 +62,7 @@ export interface PendingEventCreateRecord {
   ticket_price_cents: number | null;
   ticket_currency: string | null;
   ticket_limit: number | null;
+  test_mode: boolean;
   created_at: number;
   expires_at: number;
 }
@@ -73,6 +76,7 @@ export interface NewPendingEventCreate {
   ticketPriceCents?: number;
   ticketCurrency?: string;
   ticketLimit?: number;
+  testMode?: boolean;
 }
 
 export interface TicketOrderRecord {
@@ -174,6 +178,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ticket_price_cents INTEGER,
         ticket_currency TEXT,
         ticket_limit INTEGER,
+        test_mode BOOLEAN NOT NULL DEFAULT FALSE,
         status TEXT NOT NULL DEFAULT 'draft'
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at DOUBLE PRECISION NOT NULL,
@@ -183,6 +188,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_currency TEXT;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS test_mode BOOLEAN NOT NULL DEFAULT FALSE;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -193,6 +199,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ticket_price_cents INTEGER,
         ticket_currency TEXT,
         ticket_limit INTEGER,
+        test_mode BOOLEAN NOT NULL DEFAULT FALSE,
         created_at DOUBLE PRECISION NOT NULL,
         expires_at DOUBLE PRECISION NOT NULL
       );
@@ -203,6 +210,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         ADD COLUMN IF NOT EXISTS ticket_currency TEXT;
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS test_mode BOOLEAN NOT NULL DEFAULT FALSE;
 
       CREATE TABLE IF NOT EXISTS ticket_orders (
         id SERIAL PRIMARY KEY,
@@ -324,8 +333,9 @@ export class Store {
           ticket_price_cents,
           ticket_currency,
           ticket_limit,
+          test_mode,
           created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING *
       `,
       [
@@ -341,6 +351,7 @@ export class Store {
         draft.ticketPriceCents ?? null,
         draft.ticketCurrency ?? null,
         draft.ticketLimit ?? null,
+        draft.testMode ?? false,
         now,
       ],
     );
@@ -372,9 +383,10 @@ export class Store {
           ticket_price_cents,
           ticket_currency,
           ticket_limit,
+          test_mode,
           created_at,
           expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       `,
       [
         pending.token,
@@ -385,6 +397,7 @@ export class Store {
         pending.ticketPriceCents ?? null,
         pending.ticketCurrency ?? null,
         pending.ticketLimit ?? null,
+        pending.testMode ?? false,
         now,
         now + lifetimeSeconds,
       ],
@@ -806,6 +819,7 @@ export class Store {
     details: {
       chargeId: string;
       refundId?: string;
+      testMode: boolean;
     },
     now = currentTimestamp(),
   ): Promise<boolean> {
@@ -818,7 +832,10 @@ export class Store {
           stripe_refund_id = $2,
           updated_at = $3,
           refunded_at = $4
-        WHERE stripe_payment_intent_id = $5 AND status = 'paid'
+        WHERE
+          stripe_payment_intent_id = $5
+          AND status = 'paid'
+          AND event_id IN (SELECT id FROM events WHERE test_mode = $6)
         RETURNING id
       `,
       [
@@ -827,6 +844,7 @@ export class Store {
         now,
         now,
         paymentIntentId,
+        details.testMode,
       ],
     );
     return result.rows.length > 0;

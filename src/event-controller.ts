@@ -84,11 +84,15 @@ export class EventController {
     const artwork = interaction.options.getAttachment("artwork");
     const ticketPrice = interaction.options.getNumber("ticket_price");
     const ticketLimit = interaction.options.getInteger("ticket_limit");
+    const testEvent = interaction.options.getBoolean("test_event") ?? false;
     this.#validateArtwork(artwork);
     const ticketPriceCents = this.#ticketPriceCents(ticketPrice);
 
     if (ticketLimit !== null && ticketPriceCents === undefined) {
       throw new Error("Set ticket_price when using ticket_limit.");
+    }
+    if (testEvent && ticketPriceCents === undefined) {
+      throw new Error("Set ticket_price when creating a test event.");
     }
 
     const token = randomBytes(16).toString("hex");
@@ -107,6 +111,7 @@ export class EventController {
       pending.ticketCurrency = "aud";
     }
     if (ticketLimit !== null) pending.ticketLimit = ticketLimit;
+    if (testEvent) pending.testMode = true;
 
     await Promise.all([
       this.#store.createPendingEventCreate(pending),
@@ -175,6 +180,7 @@ export class EventController {
       draft.ticketCurrency = pending.ticket_currency;
     }
     if (pending.ticket_limit) draft.ticketLimit = pending.ticket_limit;
+    if (pending.test_mode) draft.testMode = true;
 
     const event = await this.#store.createEventDraft(draft);
 

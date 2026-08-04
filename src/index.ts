@@ -28,11 +28,19 @@ const client = new Client({
 const store = new Store(databasePool);
 const audit = new AuditLogger(client, store, config.rsvpLogChannelId);
 const stripe = new Stripe(config.stripeSecretKey);
+const stripeTestMode =
+  config.stripeTestSecretKey && config.stripeTestWebhookSecret
+    ? {
+        stripe: new Stripe(config.stripeTestSecretKey),
+        webhookSecret: config.stripeTestWebhookSecret,
+      }
+    : undefined;
 const ticketing = new TicketingService(
   stripe,
   store,
   config.publicBaseUrl,
   config.stripeWebhookSecret,
+  stripeTestMode,
 );
 const eventController = new EventController(store, audit, ticketing);
 const httpServer = startHttpServer(client, ticketing, config.healthPort);

@@ -37,6 +37,12 @@ export const commandDefinitions = [
             .setMinValue(1)
             .setMaxValue(100_000)
             .setRequired(false),
+        )
+        .addBooleanOption((option) =>
+          option
+            .setName("test_event")
+            .setDescription("Use Stripe test mode; no real money is charged")
+            .setRequired(false),
         ),
     )
     .toJSON(),

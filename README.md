@@ -16,7 +16,7 @@ RSVP changes are also mirrored to a private audit channel.
 Run:
 
 ```text
-/event create artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity>
+/event create artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity> test_event:<optional boolean>
 ```
 
 The modal collects the announcement channel, event name, schedule, location,
@@ -26,6 +26,10 @@ administrator and must be explicitly published or discarded.
 Omit `ticket_price` for an RSVP-only event. When it is present, the event post
 shows the price and a **Buy ticket** button. `ticket_limit` is optional, but can
 only be used with a ticket price. Ticket prices currently use AUD.
+
+Set `test_event:true` with a ticket price to exercise the complete Stripe
+sandbox Checkout and ticket-fulfillment flow. Test events are clearly labelled
+and never use the primary Stripe key or charge real money.
 
 The command is hidden from non-administrators by its Discord command
 permissions. Every create, publish, and discard interaction also checks the
@@ -80,6 +84,8 @@ DATABASE_URL=postgresql://user:password@host/database?sslmode=require
 PUBLIC_BASE_URL=https://club.example.com
 STRIPE_SECRET_KEY=sk_test_replace-me
 STRIPE_WEBHOOK_SECRET=whsec_replace-me
+STRIPE_TEST_SECRET_KEY=sk_test_replace-me
+STRIPE_TEST_WEBHOOK_SECRET=whsec_replace-me
 HEALTH_PORT=3000
 ```
 
@@ -102,8 +108,6 @@ first publish when needed.
 
 ## Stripe setup
 
-Use test-mode keys until the complete purchase flow has been verified.
-
 1. Set `STRIPE_SECRET_KEY` to the secret key from the Stripe Dashboard.
 2. Proxy `/stripe/` from `PUBLIC_BASE_URL` to the bot's loopback listener at
    `127.0.0.1:3001` through HTTPS.
@@ -113,6 +117,15 @@ Use test-mode keys until the complete purchase flow has been verified.
    `checkout.session.async_payment_succeeded`, and `charge.refunded`.
 5. Put that endpoint's `whsec_...` signing secret in
    `STRIPE_WEBHOOK_SECRET`.
+
+To enable `test_event:true` alongside live sales:
+
+1. Put a Stripe sandbox secret key in `STRIPE_TEST_SECRET_KEY`.
+2. In Stripe's test mode, add
+   `https://your-public-host/stripe/test-webhook` as a separate endpoint.
+3. Subscribe it to the same three events listed above.
+4. Put its separate signing secret in `STRIPE_TEST_WEBHOOK_SECRET` and restart
+   the bot.
 
 For local webhook testing, run the bot and use the Stripe CLI:
 

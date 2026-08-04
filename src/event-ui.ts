@@ -121,7 +121,11 @@ export function buildPublicEventMessage(
   const admission = event.ticket_price_cents && event.ticket_currency
     ? new ButtonBuilder()
         .setCustomId(`event:buy:${event.id}`)
-        .setLabel(`Buy ticket — ${formatTicketPrice(event)}`)
+        .setLabel(
+          event.test_mode
+            ? `Test checkout — ${formatTicketPrice(event)}`
+            : `Buy ticket — ${formatTicketPrice(event)}`,
+        )
         .setEmoji("💳")
         .setStyle(ButtonStyle.Success)
     : new ButtonBuilder()
@@ -204,14 +208,18 @@ export function buildTicketCheckout(
   checkoutUrl: string,
 ): EventReplyOptions {
   const checkout = new ButtonBuilder()
-    .setLabel("Open secure checkout")
+    .setLabel(
+      event.test_mode ? "Open Stripe test checkout" : "Open secure checkout",
+    )
     .setURL(checkoutUrl)
     .setStyle(ButtonStyle.Link);
   return {
     content:
       `A ticket for **${event.title}** is reserved for about 30 minutes.\n\n` +
       `Price: **${formatTicketPrice(event)}**\n` +
-      "Stripe will collect payment and email your receipt.",
+      (event.test_mode
+        ? "🧪 Test mode: use a Stripe test card. No real money will be charged."
+        : "Stripe will collect payment and email your receipt."),
     embeds: [],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(checkout),
@@ -222,8 +230,9 @@ export function buildTicketCheckout(
 export function buildTicketConfirmed(event: EventRecord): EventReplyOptions {
   return {
     content:
-      `✅ Your paid ticket for **${event.title}** is confirmed. ` +
-      "Stripe has emailed your receipt.",
+      (event.test_mode
+        ? `✅ Your test ticket for **${event.title}** is confirmed. No real payment was made.`
+        : `✅ Your paid ticket for **${event.title}** is confirmed. Stripe has emailed your receipt.`),
     embeds: [],
     components: [],
   };
@@ -243,7 +252,10 @@ export function buildCancellationComplete(
 }
 
 function buildAnnouncementText(event: EventRecord): string {
-  let text =
+  let text = event.test_mode
+    ? "## 🧪 TEST EVENT — NO REAL MONEY WILL BE CHARGED\n\n"
+    : "";
+  text +=
     `# ${event.title}\n\n` +
     `📅 **${event.schedule_text}**\n` +
     `📍 **${event.location}**\n\n` +
