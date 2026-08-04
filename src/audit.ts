@@ -82,6 +82,7 @@ export class AuditLogger {
       cancel: "cancelled their RSVP for",
       ticket_paid: "bought a ticket for",
       ticket_refunded: "had their ticket refunded for",
+      ticket_price_adjusted: "was refunded a price difference for",
     }[record.action];
     const eventUrl =
       `https://discord.com/channels/${record.guild_id}/` +
@@ -97,7 +98,11 @@ export class AuditLogger {
       },
     });
 
-    if (record.action === "ticket_paid" || record.action === "ticket_refunded") {
+    if (
+      record.action === "ticket_paid" ||
+      record.action === "ticket_refunded" ||
+      record.action === "ticket_price_adjusted"
+    ) {
       await this.#sendTicketDm(record, eventUrl);
     }
   }
@@ -111,6 +116,8 @@ export class AuditLogger {
       content =
         `✅ Your ticket for **${title}** is confirmed.` +
         (record.test_mode ? "" : " Stripe has emailed your receipt.");
+    } else if (record.action === "ticket_price_adjusted") {
+      content = `💸 The ticket price for **${title}** dropped — your ticket is still valid.`;
     } else {
       content =
         `↩️ Your ticket for **${title}** was refunded and is no longer valid.` +

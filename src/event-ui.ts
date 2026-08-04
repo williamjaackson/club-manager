@@ -18,6 +18,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import type { EventRecord, PendingEventCreateRecord } from "./database.js";
+import { formatCurrencyAmount } from "./money.js";
 import {
   currentTimestamp,
   formatBrisbaneDateTimeInput,
@@ -305,9 +306,12 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
     body += `\n${pending.announcement}\n`;
   }
 
+  const editing = typeof pending.edit_event_id === "number";
   let content =
-    "**Event draft** — edit any section, then create the draft to preview " +
-    `and publish.${ready ? "" : "\n-# Details and a start time are required."}\n\n${body}`;
+    (editing
+      ? "**Editing published event** — saving updates the announcement immediately."
+      : "**Event draft** — edit any section, then create the draft to preview and publish.") +
+    `${ready ? "" : "\n-# Details and a start time are required."}\n\n${body}`;
   const note = testModeNote(pending.test_mode);
   if (note) content += `\n${note}`;
 
@@ -328,16 +332,44 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`event:create:finish:${pending.token}`)
-      .setLabel("Create draft")
+      .setLabel(editing ? "Save changes" : "Create draft")
       .setStyle(ButtonStyle.Success)
       .setDisabled(!ready),
     new ButtonBuilder()
       .setCustomId(`event:create:abort:${pending.token}`)
-      .setLabel("Discard form")
+      .setLabel(editing ? "Cancel editing" : "Discard form")
       .setStyle(ButtonStyle.Danger),
   );
 
   return { content, embeds: [], components: [editRow, actionRow] };
+}
+
+export function buildEditRefundConfirm(
+  pending: PendingEventCreateRecord,
+  refundTotalCents: number,
+  refundCount: number,
+): EventReplyOptions {
+  const total = formatCurrencyAmount(refundTotalCents, pending.ticket_currency ?? "aud");
+  return {
+    content:
+      `⚠️ **Price drop refunds** — saving will refund a total of **${total}** ` +
+      `across **${refundCount}** already-sold ticket${refundCount === 1 ? "" : "s"}. ` +
+      "Ticket holders keep their tickets and are notified by DM.\n" +
+      "-# Stripe does not return the original processing fees when refunding.",
+    embeds: [],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`event:create:confirm-apply:${pending.token}`)
+          .setLabel(`Refund ${total} and save`)
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`event:create:back:${pending.token}`)
+          .setLabel("Back")
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ],
+  };
 }
 
 export function buildEventPreview(event: EventRecord): InteractionEditReplyOptions {
@@ -380,10 +412,13 @@ export function buildPublicEventMessage(event: EventRecord): MessageCreateOption
   };
 }
 
-export function buildClosedAdmissionComponents(
+// Current admission components for an event: the button disables itself when
+// admission is closed and re-enables when a deadline is extended.
+export function buildAdmissionComponents(
   event: EventRecord,
+  now = currentTimestamp(),
 ): ActionRowBuilder<ButtonBuilder>[] {
-  return [buildAdmissionRow(event, true)];
+  return [buildAdmissionRow(event, admissionClosed(event, now))];
 }
 
 export function buildReminderMessage(
@@ -546,6 +581,10 @@ export function buildEventAnnouncementText(event: EventRecord): string {
     }
   }
 
+  if (typeof event.edited_at === "number") {
+    text += `\n\n-# Edited <t:${event.edited_at}:R>`;
+  }
+
   return withTestNote(event, text);
 }
 
@@ -573,12 +612,5 @@ function formatTicketPrice(event: EventRecord): string {
     throw new Error("This event does not have a ticket price.");
   }
 
-  if (event.ticket_currency.toLowerCase() === "aud") {
-    return `A$${(event.ticket_price_cents / 100).toFixed(2)}`;
-  }
-
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency: event.ticket_currency.toUpperCase(),
-  }).format(event.ticket_price_cents / 100);
+  return formatCurrencyAmount(event.ticket_price_cents, event.ticket_currency);
 }

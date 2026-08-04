@@ -1,5 +1,11 @@
 import type Stripe from "stripe";
-import type { EventRecord, Store, TicketOrderRecord } from "./database.js";
+import type {
+  EventRecord,
+  PriceDropRefund,
+  Store,
+  TicketOrderRecord,
+} from "./database.js";
+import { formatCurrencyAmount } from "./money.js";
 import { currentTimestamp } from "./time.js";
 
 export type TicketCheckoutResult =
@@ -124,6 +130,58 @@ export class TicketingService {
       order: attached,
       checkoutUrl: session.url,
     };
+  }
+
+  // Refunds the price difference after an admin lowers a paid event's price.
+  // Failures are logged and reported; unfinalized orders keep amount_total
+  // above the new price, so the next saved edit retries them automatically.
+  async refundPriceDifferences(
+    event: EventRecord,
+    refunds: PriceDropRefund[],
+  ): Promise<{ refunded: number; failed: number }> {
+    const stripe = this.#stripeForEvent(event);
+    let refunded = 0;
+    let failed = 0;
+
+    for (const refund of refunds) {
+      if (!refund.paymentIntentId) {
+        failed += 1;
+        console.warn(
+          `Ticket order ${refund.orderId} has no payment intent; ` +
+            "refund the difference manually in the Stripe dashboard",
+        );
+        continue;
+      }
+
+      try {
+        await stripe.refunds.create(
+          {
+            payment_intent: refund.paymentIntentId,
+            amount: refund.amountCents,
+          },
+          {
+            idempotencyKey: `price-drop-${refund.orderId}-${refund.newAmountTotal}`,
+          },
+        );
+        await this.#store.finalizePriceAdjustment(
+          refund.orderId,
+          refund.newAmountTotal,
+          `${formatCurrencyAmount(
+            refund.amountCents,
+            event.ticket_currency ?? "aud",
+          )} is being refunded to your card.`,
+        );
+        refunded += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(
+          `Failed to refund the price difference for order ${refund.orderId}`,
+          error,
+        );
+      }
+    }
+
+    return { refunded, failed };
   }
 
   async handleWebhook(

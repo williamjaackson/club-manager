@@ -54,6 +54,16 @@ and repeats the event's trusted RSVP or ticket button. Closed admission buttons
 are shown disabled.
 
 Right-click a published event announcement or one of its reminders and select
+**Apps → Edit Event** to change it after publishing. The same draft panel used
+for creation opens pre-filled; saving updates the announcement in place and
+adds a small "Edited" note. Events cannot switch between free and paid after
+publishing, test mode is locked, and capacity cannot drop below the members
+already admitted. Lowering a paid event's price asks for confirmation, then
+refunds every earlier buyer the difference through Stripe automatically —
+ticket holders keep their tickets and are notified by DM. (Stripe does not
+return the original processing fees when refunding.)
+
+Right-click a published event announcement or one of its reminders and select
 **Apps → Close Event** to stop admission immediately. The administrator-only
 message command closes free RSVPs and paid ticket sales, updates the original
 announcement's close time, and disables admission buttons on the announcement

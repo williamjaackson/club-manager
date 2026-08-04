@@ -990,8 +990,20 @@ test("opens Stripe Checkout privately for an eligible paid-event member", async 
 });
 
 test("rejects wizard schedules that start in the past", async () => {
-  const controller = new EventController({}, {});
   const token = "a".repeat(32);
+  const controller = new EventController(
+    {
+      async getPendingEventCreate() {
+        return {
+          token,
+          user_id: "32345678901234567",
+          guild_id: "12345678901234567",
+          edit_event_id: null,
+        };
+      },
+    },
+    {},
+  );
 
   await assert.rejects(
     controller.handleModal({

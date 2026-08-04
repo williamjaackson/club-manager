@@ -199,22 +199,32 @@ test("posts refunds to the log channel and DMs the former ticket holder", async 
       channels: {
         async fetch() {
           return {
-            isSendable() { return true; },
-            async send(options) { sent = options; },
+            isSendable() {
+              return true;
+            },
+            async send(options) {
+              sent = options;
+            },
           };
         },
       },
       users: {
         async fetch() {
           return {
-            async send(content) { dm = content; },
+            async send(content) {
+              dm = content;
+            },
           };
         },
       },
     },
     {
-      async getPendingAudit() { return [record]; },
-      async markAuditSent(id) { markedId = id; },
+      async getPendingAudit() {
+        return [record];
+      },
+      async markAuditSent(id) {
+        markedId = id;
+      },
     },
     {
       async resolve() {
