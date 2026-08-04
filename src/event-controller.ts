@@ -235,12 +235,20 @@ export class EventController {
     const components = buildAdmissionComponents(event, undefined, attendance);
     const updates: Promise<unknown>[] = [];
     if (event.message_id) {
+      // attachments: [] drops the previous upload so artwork changes and
+      // removals propagate; files re-uploads the current artwork if any.
+      const files =
+        event.artwork_url && event.artwork_name
+          ? [new AttachmentBuilder(event.artwork_url, { name: event.artwork_name })]
+          : [];
       updates.push(
         this.#getOrCreateEventWebhook(channel, interaction.client.user.id).then(
           (webhook) =>
             webhook.editMessage(event.message_id!, {
               content: buildEventAnnouncementText(event, attendance),
               components,
+              attachments: [],
+              files,
             }),
         ),
       );
@@ -341,12 +349,31 @@ export class EventController {
       throw new Error("Use Edit Event on an event announcement or reminder.");
     }
 
+    const pending = await this.#seedPendingFromEvent(
+      event,
+      interaction.user.id,
+      interaction.guildId,
+      { editEventId: event.id },
+    );
+    await interaction.editReply(buildWizardHub(pending));
+  }
+
+  // Copies an event into a fresh pending form; used to edit published
+  // events and to reopen draft previews. Seeded forms count every step as
+  // completed since all values came from a finished event.
+  async #seedPendingFromEvent(
+    event: EventRecord,
+    userId: string,
+    guildId: string,
+    options: { editEventId?: number } = {},
+  ): Promise<PendingEventCreateRecord> {
     const token = randomBytes(16).toString("hex");
     const seed: NewPendingEventCreate = {
       token,
-      userId: interaction.user.id,
-      guildId: interaction.guildId,
-      editEventId: event.id,
+      userId,
+      guildId,
+      ...(options.editEventId !== undefined ? { editEventId: options.editEventId } : {}),
+      admissionSet: true,
       announcementChannelId: event.announcement_channel_id,
       title: event.title,
       location: event.location,
@@ -370,9 +397,9 @@ export class EventController {
     await this.#store.createPendingEventCreate(seed);
     const pending = await this.#store.getPendingEventCreate(token);
     if (!pending) {
-      throw new Error("The edit form could not be created. Try again.");
+      throw new Error("The form could not be created. Try again.");
     }
-    await interaction.editReply(buildWizardHub(pending));
+    return pending;
   }
 
   // Wizard modals opened from the hub edit the hub message in place; the
@@ -563,9 +590,10 @@ export class EventController {
       !pending.title ||
       !pending.location ||
       !pending.announcement ||
-      typeof pending.starts_at !== "number"
+      typeof pending.starts_at !== "number" ||
+      !pending.admission_set
     ) {
-      throw new Error("Complete the event details and schedule steps first.");
+      throw new Error("Complete the details, schedule, and admission steps first.");
     }
     if (pending.ticket_sales_close_at !== null && pending.ticket_price_cents === null) {
       throw new Error("Ticket sales close requires a paid ticket price.");
@@ -1020,6 +1048,16 @@ export class EventController {
         await this.#renderWizardHub(interaction, wizard.token);
         return true;
       }
+      if (wizard.action === "remove-artwork") {
+        await interaction.deferUpdate();
+        await this.#store.clearPendingArtwork(
+          wizard.token,
+          interaction.user.id,
+          interaction.guildId,
+        );
+        await this.#renderWizardHub(interaction, wizard.token);
+        return true;
+      }
       if (wizard.action === "abort") {
         await this.#abortEventWizard(interaction, wizard.token);
         return true;
@@ -1069,6 +1107,9 @@ export class EventController {
     switch (parsed.action) {
       case "publish":
         await this.#publish(interaction, event);
+        return true;
+      case "edit-draft":
+        await this.#reopenDraft(interaction, event);
         return true;
       case "discard":
         await this.#discard(interaction, event);
@@ -1177,6 +1218,31 @@ export class EventController {
         this.#webhookLookups.delete(channel.id);
       }
     }
+  }
+
+  async #reopenDraft(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Events can only be edited inside a server.");
+    }
+
+    // The draft row is replaced by a fresh form; finishing again creates a
+    // new draft, so the old one is discarded to avoid duplicates.
+    if (!(await this.#store.discardEventDraft(event.id))) {
+      await interaction.editReply({
+        content: "This draft has already been published or discarded.",
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+
+    const pending = await this.#seedPendingFromEvent(
+      event,
+      interaction.user.id,
+      interaction.guildId,
+    );
+    await interaction.editReply({ ...buildWizardHub(pending), attachments: [] });
   }
 
   async #discard(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
@@ -1398,6 +1464,7 @@ export class EventController {
 
 const eventButtonActions = [
   "publish",
+  "edit-draft",
   "discard",
   "buy",
   "rsvp",
@@ -1454,13 +1521,14 @@ type WizardButtonAction =
   | "finish"
   | "confirm-apply"
   | "back"
+  | "remove-artwork"
   | "abort";
 
 function parseEventWizardAction(
   customId: string,
 ): { action: WizardButtonAction; token: string } | undefined {
   const match =
-    /^event:create:(edit-details|edit-schedule|edit-admission|finish|confirm-apply|back|abort):([a-f0-9]{32})$/.exec(
+    /^event:create:(edit-details|edit-schedule|edit-admission|finish|confirm-apply|back|remove-artwork|abort):([a-f0-9]{32})$/.exec(
       customId,
     );
   if (!match?.[1] || !match[2]) return undefined;

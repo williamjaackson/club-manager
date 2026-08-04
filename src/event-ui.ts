@@ -258,13 +258,15 @@ export function buildCreateEventAdmissionModal(
 }
 
 export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOptions {
-  const ready = Boolean(
+  const detailsDone = Boolean(
     pending.announcement_channel_id &&
       pending.title &&
       pending.location &&
-      pending.announcement &&
-      typeof pending.starts_at === "number",
+      pending.announcement,
   );
+  const scheduleDone = typeof pending.starts_at === "number";
+  const admissionDone = pending.admission_set;
+  const ready = detailsDone && scheduleDone && admissionDone;
 
   let body = `## ${pending.title ?? "Untitled event"}\n`;
   if (typeof pending.starts_at === "number") {
@@ -308,6 +310,9 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
       typeof pending.ticket_price_cents === "number" ? "Ticket sales" : "RSVPs"
     } close <t:${pending.ticket_sales_close_at}:F>\n`;
   }
+  if (pending.artwork_url) {
+    body += "🖼️ Artwork attached\n";
+  }
   if (pending.announcement) {
     body += `\n${pending.announcement}\n`;
   }
@@ -316,23 +321,26 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
   let content =
     (editing
       ? "**Editing published event** — saving updates the announcement immediately."
-      : "**Event draft** — edit any section, then create the draft to preview and publish.") +
-    `${ready ? "" : "\n-# Details and a start time are required."}\n\n${body}`;
+      : "**Event draft** — complete every step, then create the draft to preview and publish.") +
+    `${ready ? "" : "\n-# Each section needs a ✅ before the event can be created."}\n\n${body}`;
   const note = testModeNote(pending.test_mode);
   if (note) content += `\n${note}`;
 
   const editRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId(`event:create:edit-details:${pending.token}`)
-      .setLabel("Edit details")
+      .setLabel("Details")
+      .setEmoji(detailsDone ? "✅" : "✏️")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`event:create:edit-schedule:${pending.token}`)
-      .setLabel("Edit schedule")
+      .setLabel("Schedule")
+      .setEmoji(scheduleDone ? "✅" : "✏️")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`event:create:edit-admission:${pending.token}`)
-      .setLabel("Edit admission")
+      .setLabel("Admission")
+      .setEmoji(admissionDone ? "✅" : "✏️")
       .setStyle(ButtonStyle.Secondary),
   );
   const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -346,6 +354,14 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
       .setLabel(editing ? "Cancel editing" : "Discard form")
       .setStyle(ButtonStyle.Danger),
   );
+  if (pending.artwork_url) {
+    actionRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`event:create:remove-artwork:${pending.token}`)
+        .setLabel("Remove artwork")
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
 
   return { content, embeds: [], components: [editRow, actionRow] };
 }
@@ -383,6 +399,10 @@ export function buildEventPreview(event: EventRecord): InteractionEditReplyOptio
     .setCustomId(`event:publish:${event.id}`)
     .setLabel("Publish")
     .setStyle(ButtonStyle.Success);
+  const edit = new ButtonBuilder()
+    .setCustomId(`event:edit-draft:${event.id}`)
+    .setLabel("Edit")
+    .setStyle(ButtonStyle.Secondary);
   const discard = new ButtonBuilder()
     .setCustomId(`event:discard:${event.id}`)
     .setLabel("Discard")
@@ -399,7 +419,9 @@ export function buildEventPreview(event: EventRecord): InteractionEditReplyOptio
       `<#${event.announcement_channel_id}>.\n\n` +
       buildEventAnnouncementText(event),
     embeds: [],
-    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(publish, discard)],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(publish, edit, discard),
+    ],
     files,
   };
 }
