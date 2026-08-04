@@ -188,3 +188,45 @@ test("flush never rejects even when the store fails", async () => {
 
   await assert.doesNotReject(logger.flush());
 });
+
+test("posts refunds to the log channel and DMs the former ticket holder", async () => {
+  let sent;
+  let dm;
+  let markedId;
+  const record = ticketPaidRecord({ action: "ticket_refunded", detail: null });
+  const logger = new AuditLogger(
+    {
+      channels: {
+        async fetch() {
+          return {
+            isSendable() { return true; },
+            async send(options) { sent = options; },
+          };
+        },
+      },
+      users: {
+        async fetch() {
+          return {
+            async send(content) { dm = content; },
+          };
+        },
+      },
+    },
+    {
+      async getPendingAudit() { return [record]; },
+      async markAuditSent(id) { markedId = id; },
+    },
+    {
+      async resolve() {
+        return { rsvpLogChannelId: "42345678901234567" };
+      },
+    },
+  );
+
+  await logger.flush();
+
+  assert.equal(markedId, record.id);
+  assert.match(sent.content, /had their ticket refunded for/);
+  assert.match(dm, /was refunded and is no longer valid/);
+  assert.match(dm, /return the payment to your card/);
+});

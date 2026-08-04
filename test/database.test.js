@@ -632,3 +632,50 @@ test("stores and clears per-guild settings", async () => {
     await context.close();
   }
 });
+
+test("queues a refund notification when a ticket is revoked", async () => {
+  const context = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+    const attached = await context.store.attachTicketCheckout(
+      reservation.order.id,
+      reservation.order.attempt,
+      "cs_refund_test",
+      "https://checkout.stripe.com/test",
+      302,
+    );
+    await context.store.fulfillTicketOrder(
+      attached.id,
+      "cs_refund_test",
+      { paymentIntentId: "pi_refund_test", amountTotal: 1250, currency: "aud" },
+      400,
+    );
+    assert.equal(
+      await context.store.refundTicketOrderByPaymentIntent(
+        "pi_refund_test",
+        { chargeId: "ch_refund_test", testMode: false },
+        500,
+      ),
+      true,
+    );
+
+    const audits = await context.store.getPendingAudit(600);
+    assert.deepEqual(
+      audits.map(({ action }) => action),
+      ["ticket_paid", "ticket_refunded"],
+    );
+    assert.equal(audits[1]?.user_id, "52345678901234567");
+  } finally {
+    await context.close();
+  }
+});
