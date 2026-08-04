@@ -118,23 +118,18 @@ export function buildEventPreview(
 export function buildPublicEventMessage(
   event: EventRecord,
 ): MessageCreateOptions {
-  const rsvp = new ButtonBuilder()
-    .setCustomId(`event:rsvp:${event.id}`)
-    .setLabel("RSVP")
-    .setEmoji("🎟️")
-    .setStyle(ButtonStyle.Secondary);
-  const buttons = [rsvp];
-  const files: AttachmentBuilder[] = [];
-
-  if (event.ticket_price_cents && event.ticket_currency) {
-    buttons.push(
-      new ButtonBuilder()
+  const admission = event.ticket_price_cents && event.ticket_currency
+    ? new ButtonBuilder()
         .setCustomId(`event:buy:${event.id}`)
         .setLabel(`Buy ticket — ${formatTicketPrice(event)}`)
         .setEmoji("💳")
-        .setStyle(ButtonStyle.Success),
-    );
-  }
+        .setStyle(ButtonStyle.Success)
+    : new ButtonBuilder()
+        .setCustomId(`event:rsvp:${event.id}`)
+        .setLabel("RSVP")
+        .setEmoji("🎟️")
+        .setStyle(ButtonStyle.Secondary);
+  const files: AttachmentBuilder[] = [];
 
   if (event.artwork_url && event.artwork_name) {
     files.push(
@@ -145,7 +140,7 @@ export function buildPublicEventMessage(
   return {
     content: buildAnnouncementText(event),
     components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(buttons),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(admission),
     ],
     files,
   };
@@ -164,9 +159,7 @@ export function buildRsvpPrompt(event: EventRecord): EventReplyOptions {
     content: buildCompactRsvpText(
       event,
       "Would you like to RSVP?",
-      event.ticket_price_cents
-        ? "RSVP is free, but it does not include a paid ticket."
-        : "No payment is required to RSVP.",
+      "No payment is required to RSVP.",
     ),
     embeds: [],
     components: [

@@ -847,7 +847,11 @@ export class Store {
       // idempotency when Discord retries the same interaction concurrently.
       const event = await this.#getEvent(client, eventId, true);
 
-      if (!event || event.status !== "published") {
+      if (
+        !event ||
+        event.status !== "published" ||
+        (status === "active" && event.ticket_price_cents !== null)
+      ) {
         throw new EventUnavailableError();
       }
 

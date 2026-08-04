@@ -190,6 +190,47 @@ test("checks RSVP eligibility again when confirming", async () => {
   assert.match(reply.content, /1348722902375071785/);
 });
 
+test("rejects RSVP buttons for paid events", async () => {
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "42345678901234567",
+    creator_id: "32345678901234567",
+    title: "Paid event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 50,
+    status: "published",
+    created_at: 100,
+    published_at: 101,
+  };
+  const controller = new EventController({
+    async getEvent() { return event; },
+    async getRsvpStatus() {
+      assert.fail("paid events must not reach the RSVP lookup");
+    },
+  }, {});
+
+  await assert.rejects(
+    controller.handleButton({
+      customId: `event:rsvp:${event.id}`,
+      guildId: event.guild_id,
+      user: { id: "52345678901234567" },
+      message: { id: event.message_id },
+      member: { roles: [] },
+      async deferReply() {},
+      async editReply() {},
+    }),
+    /paid event.*Buy ticket/i,
+  );
+});
+
 test("publishes through a new webhook as the command runner", async () => {
   const event = eventDraft(42);
   let createdWebhook;
