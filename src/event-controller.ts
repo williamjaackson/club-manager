@@ -48,6 +48,12 @@ import {
 } from "./event-ui.js";
 import { rsvpEligibility } from "./rsvp-eligibility.js";
 import type { TicketingService } from "./ticketing.js";
+import {
+  currentTimestamp,
+  formatScheduleText,
+  optionalBrisbaneDateTime,
+  parseBrisbaneDateTime,
+} from "./time.js";
 
 export class EventController {
   readonly #store: Store;
@@ -752,19 +758,14 @@ export class EventController {
   }
 
   #requireRsvpOpen(event: EventRecord): void {
-    const now = currentTimestamp();
-    if (typeof event.ends_at === "number" && event.ends_at <= now) {
-      throw new EventFinishedError();
-    }
-    if (
-      typeof event.ticket_sales_close_at === "number" &&
-      event.ticket_sales_close_at <= now
-    ) {
-      throw new EventAdmissionClosedError();
-    }
+    this.#requireAdmissionOpen(event, EventAdmissionClosedError);
   }
 
   #requireTicketSalesOpen(event: EventRecord): void {
+    this.#requireAdmissionOpen(event, TicketSalesClosedError);
+  }
+
+  #requireAdmissionOpen(event: EventRecord, ClosedError: new () => Error): void {
     const now = currentTimestamp();
     if (typeof event.ends_at === "number" && event.ends_at <= now) {
       throw new EventFinishedError();
@@ -773,7 +774,7 @@ export class EventController {
       typeof event.ticket_sales_close_at === "number" &&
       event.ticket_sales_close_at <= now
     ) {
-      throw new TicketSalesClosedError();
+      throw new ClosedError();
     }
   }
 
@@ -837,34 +838,32 @@ export class EventController {
   }
 }
 
-type EventButtonAction =
-  | "publish"
-  | "discard"
-  | "buy"
-  | "rsvp"
-  | "rsvp-confirm"
-  | "cancel-confirm"
-  | "dismiss";
+const eventButtonActions = [
+  "publish",
+  "discard",
+  "buy",
+  "rsvp",
+  "rsvp-confirm",
+  "cancel-confirm",
+  "dismiss",
+] as const;
+
+type EventButtonAction = (typeof eventButtonActions)[number];
+
+function isEventButtonAction(value: string): value is EventButtonAction {
+  return (eventButtonActions as readonly string[]).includes(value);
+}
 
 function parseEventButton(
   customId: string,
 ): { action: EventButtonAction; eventId: number } | undefined {
   const match = /^event:([a-z-]+):(\d+)$/.exec(customId);
-  if (!match) return undefined;
+  if (!match?.[1]) return undefined;
 
-  const action = match[1] as EventButtonAction;
+  const action = match[1];
   const eventId = Number(match[2]);
-  const actions: EventButtonAction[] = [
-    "publish",
-    "discard",
-    "buy",
-    "rsvp",
-    "rsvp-confirm",
-    "cancel-confirm",
-    "dismiss",
-  ];
 
-  return actions.includes(action) ? { action, eventId } : undefined;
+  return isEventButtonAction(action) ? { action, eventId } : undefined;
 }
 
 function parseEventWizardStep(
@@ -888,51 +887,6 @@ function safeAttachmentName(name: string): string {
   return sanitized || "event-artwork.png";
 }
 
-function parseBrisbaneDateTime(value: string, optionName: string): number {
-  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/.exec(value.trim());
-  if (!match) {
-    throw new Error(`${optionName} must use YYYY-MM-DD HH:mm Brisbane time.`);
-  }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const hour = Number(match[4]);
-  const minute = Number(match[5]);
-  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  if (
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > daysInMonth ||
-    hour > 23 ||
-    minute > 59
-  ) {
-    throw new Error(`${optionName} is not a valid Brisbane date and time.`);
-  }
-
-  return Math.floor(
-    Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+10:00`) /
-      1000,
-  );
-}
-
-function optionalBrisbaneDateTime(value: string, fieldName: string): number | undefined {
-  return value.trim() ? parseBrisbaneDateTime(value, fieldName) : undefined;
-}
-
-function formatScheduleText(startsAt: number, endsAt?: number): string {
-  const formatter = new Intl.DateTimeFormat("en-AU", {
-    timeZone: "Australia/Brisbane",
-    dateStyle: "full",
-    timeStyle: "short",
-  });
-  const start = formatter.format(new Date(startsAt * 1000));
-  return endsAt === undefined
-    ? `${start} (Brisbane)`
-    : `${start} – ${formatter.format(new Date(endsAt * 1000))} (Brisbane)`;
-}
-
 function parseAnnouncementLink(
   value: string,
 ): { guildId: string; channelId: string; messageId: string } | undefined {
@@ -942,10 +896,6 @@ function parseAnnouncementLink(
     );
   if (!match?.[1] || !match[2] || !match[3]) return undefined;
   return { guildId: match[1], channelId: match[2], messageId: match[3] };
-}
-
-function currentTimestamp(): number {
-  return Math.floor(Date.now() / 1000);
 }
 
 const eventWebhookName = "Club Manager Event Announcements";

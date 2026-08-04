@@ -18,6 +18,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import type { EventRecord } from "./database.js";
+import { currentTimestamp } from "./time.js";
 
 export type EventReplyOptions = Pick<
   InteractionReplyOptions,
@@ -231,7 +232,7 @@ export function buildClosedAdmissionComponents(
 export function buildReminderMessage(
   event: EventRecord,
   content: string,
-  now = Math.floor(Date.now() / 1000),
+  now = currentTimestamp(),
 ): MessageCreateOptions {
   return {
     content,

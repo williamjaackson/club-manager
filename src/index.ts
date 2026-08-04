@@ -17,7 +17,7 @@ import {
   Store,
 } from "./database.js";
 import { EventController } from "./event-controller.js";
-import { startHttpServer } from "./health.js";
+import { startHttpServer } from "./http.js";
 import { TicketingService } from "./ticketing.js";
 
 await initializeDatabase(config.databaseUrl);
@@ -43,7 +43,7 @@ const ticketing = new TicketingService(
   stripeTestMode,
 );
 const eventController = new EventController(store, audit, ticketing);
-const httpServer = startHttpServer(client, ticketing, config.healthPort, () => {
+const httpServer = startHttpServer(client, ticketing, config.httpPort, () => {
   void audit.flush();
 });
 let shuttingDown = false;

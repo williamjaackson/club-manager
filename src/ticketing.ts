@@ -1,5 +1,6 @@
 import type Stripe from "stripe";
 import type { EventRecord, Store, TicketOrderRecord } from "./database.js";
+import { currentTimestamp } from "./time.js";
 
 export type TicketCheckoutResult =
   | { alreadyPaid: true; order: TicketOrderRecord }
@@ -302,8 +303,4 @@ function integerMetadata(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function currentTimestamp(): number {
-  return Math.floor(Date.now() / 1000);
 }
