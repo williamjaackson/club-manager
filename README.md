@@ -36,8 +36,8 @@ use Discord timestamps, which each member sees in their own local time.
 Leave ticket price blank for an RSVP-only event. When a price is present, the
 event post shows it and a **Buy ticket** button. Optional capacity limits either
 completed free RSVPs or reserved/paid tickets. Ticket prices currently use AUD.
-The optional ticket close time can close paid sales before the event finishes
-and can only be used with a ticket price. Without it, ticket sales close at the
+The optional admission close time stops ticket sales — or RSVPs on free
+events — before the event finishes. Without it, admission closes at the
 finish time when one is set.
 
 Publishing also creates a matching event in Discord's native **Events** tab
@@ -67,9 +67,11 @@ member, discount, scope, expiry, and status, and revoke it if it hasn't been
 redeemed. Redeemed coupons are part of the payment record and cannot be
 revoked.
 
-Run `/reminder announcement:<event message link> message:<your text>` to reply
-to a published announcement. The reminder supports mentions such as `@everyone`
-and repeats the event's trusted RSVP or ticket button. Closed admission buttons
+Run `/reminder announcement:<event message link> message:<your text>` to send
+a reminder for a published announcement. Reminders post through the same
+webhook identity as the announcement, open with a link back to it, support
+mentions such as `@everyone`, and repeat the event's trusted RSVP or ticket
+button. Closed admission buttons
 are shown disabled.
 
 Right-click a published event announcement or one of its reminders and select

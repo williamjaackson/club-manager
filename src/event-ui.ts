@@ -202,8 +202,8 @@ export function buildCreateEventScheduleModal(
         .setDescription("May be on a later date for multi-day events.")
         .setTextInputComponent(endsAt),
       new LabelBuilder()
-        .setLabel("Ticket sales close (optional)")
-        .setDescription("Paid events only · may close before the finish.")
+        .setLabel("Admission close (optional)")
+        .setDescription("Closes ticket sales or RSVPs before the finish.")
         .setTextInputComponent(ticketSalesCloseAt),
       new LabelBuilder()
         .setLabel("Google Maps link (optional)")
@@ -556,6 +556,50 @@ export function buildRsvpComplete(
   };
 }
 
+export function buildCouponChoice(
+  event: EventRecord,
+  coupon: { percent_off: number; event_id: number | null; expires_at: number | null },
+  discountedCents: number,
+): EventReplyOptions {
+  const scope = coupon.event_id === null ? "any paid event" : "this event only";
+  const expiry =
+    coupon.expires_at === null ? "" : ` It expires <t:${coupon.expires_at}:R>.`;
+  const useCoupon = new ButtonBuilder()
+    .setCustomId(`event:buy-coupon:${event.id}`)
+    .setLabel(
+      discountedCents < 50
+        ? "Apply coupon — free ticket"
+        : `Apply coupon — pay ${formatCurrencyAmount(
+            discountedCents,
+            event.ticket_currency ?? "aud",
+          )}`,
+    )
+    .setStyle(ButtonStyle.Success);
+  const buttons = [useCoupon];
+  // Event-scoped coupons are useless later, so saving them is not offered.
+  if (coupon.event_id === null) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`event:buy-full:${event.id}`)
+        .setLabel(`Save coupon — pay ${formatTicketPrice(event)}`)
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+  return {
+    content: withTestNote(
+      event,
+      `🎁 You have a **${coupon.percent_off}% off** coupon for ${scope}.${expiry}\n\n` +
+        `Price with coupon: ~~${formatTicketPrice(event)}~~ **${
+          discountedCents < 50
+            ? "FREE"
+            : formatCurrencyAmount(discountedCents, event.ticket_currency ?? "aud")
+        }**`,
+    ),
+    embeds: [],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)],
+  };
+}
+
 export function buildTicketCheckout(
   event: EventRecord,
   checkoutUrl: string,
@@ -585,12 +629,18 @@ export function buildTicketCheckout(
   };
 }
 
-export function buildTicketConfirmed(event: EventRecord): EventReplyOptions {
+export function buildTicketConfirmed(
+  event: EventRecord,
+  options: { freeViaCoupon?: boolean } = {},
+): EventReplyOptions {
+  const receipt =
+    event.test_mode || options.freeViaCoupon ? "" : " Stripe has emailed your receipt.";
   return {
     content: withTestNote(
       event,
       `✅ Your ticket for **${event.title}** is confirmed.` +
-        (event.test_mode ? "" : " Stripe has emailed your receipt."),
+        (options.freeViaCoupon ? " Your coupon covered the full price." : "") +
+        receipt,
     ),
     embeds: [],
     components: [],
@@ -648,10 +698,6 @@ export function buildEventAnnouncementText(
       line += left === 0 ? " · none left" : ` · ${left} left`;
     }
     text += `\n\n-# ${line}`;
-  }
-
-  if (typeof event.edited_at === "number") {
-    text += `\n\n-# Edited <t:${event.edited_at}:R>`;
   }
 
   if (typeof event.cancelled_at === "number") {

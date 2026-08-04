@@ -55,6 +55,7 @@ import {
 import {
   buildAdmissionComponents,
   buildCancellationComplete,
+  buildCouponChoice,
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
@@ -75,6 +76,7 @@ import { findOrCreateEventWebhook } from "./event-webhook.js";
 import { ScheduledEventSync } from "./scheduled-events.js";
 import type { ResolvedGuildSettings, SettingsManager } from "./settings.js";
 import type { TicketingService } from "./ticketing.js";
+import { discountedPriceCents } from "./ticketing.js";
 import {
   currentTimestamp,
   formatScheduleText,
@@ -601,9 +603,6 @@ export class EventController {
     ) {
       throw new Error("Complete the details, schedule, and admission steps first.");
     }
-    if (pending.ticket_sales_close_at !== null && pending.ticket_price_cents === null) {
-      throw new Error("Ticket sales close requires a paid ticket price.");
-    }
     if (pending.test_mode && pending.ticket_price_cents === null) {
       throw new Error("Stripe test events require a paid ticket price.");
     }
@@ -1078,13 +1077,25 @@ export class EventController {
       throw new Error("The event announcement channel is unavailable.");
     }
 
-    const announcement = await channel.messages.fetch(link.messageId);
-    const reminder = await announcement.reply(buildReminderMessage(event, reminderText));
+    // Webhooks cannot reply to messages, so the reminder opens with a bare
+    // link back to the announcement instead.
+    const announcementUrl =
+      `https://discord.com/channels/${link.guildId}/` +
+      `${link.channelId}/${link.messageId}`;
+    const webhook = await this.#getOrCreateEventWebhook(
+      channel,
+      interaction.client.user.id,
+    );
+    const reminder = await webhook.send({
+      ...buildReminderMessage(event, `${announcementUrl}\n${reminderText}`),
+      ...commandRunnerIdentity(interaction),
+      withComponents: true,
+    });
 
     try {
       await this.#store.recordEventReminder(event.id, reminder.id);
     } catch (error) {
-      await reminder.delete().catch(() => undefined);
+      await webhook.deleteMessage(reminder.id).catch(() => undefined);
       throw error;
     }
 
@@ -1219,6 +1230,12 @@ export class EventController {
         return true;
       case "buy":
         await this.#buyTicket(interaction, event);
+        return true;
+      case "buy-coupon":
+        await this.#completeBuy(interaction, event, true);
+        return true;
+      case "buy-full":
+        await this.#completeBuy(interaction, event, false);
         return true;
       case "rsvp-confirm":
         await this.#confirmRsvp(interaction, event);
@@ -1414,13 +1431,62 @@ export class EventController {
       throw new Error("This event does not have paid tickets.");
     }
 
-    const checkout = await this.#ticketing.startCheckout(event, interaction.user.id);
+    // Members holding a coupon confirm whether to spend it before any
+    // reservation or Checkout Session exists.
+    const existing = await this.#store.getTicketOrderForMember(
+      event.id,
+      interaction.user.id,
+    );
+    if (existing?.status !== "paid") {
+      const coupon = await this.#store.findBestCoupon(
+        event.guild_id,
+        interaction.user.id,
+        event.id,
+      );
+      if (coupon) {
+        await interaction.editReply(
+          buildCouponChoice(
+            event,
+            coupon,
+            discountedPriceCents(event.ticket_price_cents, coupon.percent_off),
+          ),
+        );
+        return;
+      }
+    }
+
+    await this.#completeBuy(interaction, event, false);
+  }
+
+  // Reached from the buy flow directly (no coupon) or from the coupon
+  // choice buttons, which live on an ephemeral reply rather than the
+  // announcement — admission rules are re-checked, message provenance is not.
+  async #completeBuy(
+    interaction: ButtonInteraction,
+    event: EventRecord,
+    applyCoupon: boolean,
+  ): Promise<void> {
+    this.#requirePublished(event);
+    this.#requireTicketSalesOpen(event);
+    if (!(await this.#canRsvp(interaction))) {
+      await interaction.editReply(await this.#verificationRequiredReply(interaction));
+      return;
+    }
+
+    const checkout = await this.#ticketing.startCheckout(event, interaction.user.id, {
+      applyCoupon,
+    });
     if (!checkout.alreadyPaid) this.#refresher.markDirty(event.id);
     await interaction.editReply(
       checkout.alreadyPaid
-        ? buildTicketConfirmed(event)
+        ? buildTicketConfirmed(event, {
+            freeViaCoupon: checkout.order.amount_total === 0,
+          })
         : buildTicketCheckout(event, checkout.checkoutUrl, checkout.discount),
     );
+    if (checkout.alreadyPaid && checkout.order.amount_total === 0) {
+      void this.#audit.flush();
+    }
   }
 
   async #cancelRsvp(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
@@ -1567,6 +1633,8 @@ const eventButtonActions = [
   "edit-draft",
   "discard",
   "buy",
+  "buy-coupon",
+  "buy-full",
   "rsvp",
   "rsvp-confirm",
   "cancel-confirm",
@@ -1697,7 +1765,9 @@ function parseAnnouncementLink(
   return { guildId: match[1], channelId: match[2], messageId: match[3] };
 }
 
-function commandRunnerIdentity(interaction: ButtonInteraction): {
+function commandRunnerIdentity(
+  interaction: ButtonInteraction | ChatInputCommandInteraction,
+): {
   username: string;
   avatarURL: string;
 } {

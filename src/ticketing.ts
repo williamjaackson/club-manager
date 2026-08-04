@@ -68,7 +68,12 @@ export class TicketingService {
     this.#onOrderChange = onOrderChange;
   }
 
-  async startCheckout(event: EventRecord, userId: string): Promise<TicketCheckoutResult> {
+  async startCheckout(
+    event: EventRecord,
+    userId: string,
+    options: { applyCoupon?: boolean } = {},
+  ): Promise<TicketCheckoutResult> {
+    const applyCoupon = options.applyCoupon ?? true;
     const stripe = this.#stripeForEvent(event);
     const reservation = await this.#store.reserveTicketCheckout(event.id, userId);
 
@@ -99,7 +104,9 @@ export class TicketingService {
     }
 
     const order = reservation.order;
-    const coupon = await this.#store.findBestCoupon(event.guild_id, userId, event.id);
+    const coupon = applyCoupon
+      ? await this.#store.findBestCoupon(event.guild_id, userId, event.id)
+      : undefined;
     const chargeCents = coupon
       ? discountedPriceCents(event.ticket_price_cents, coupon.percent_off)
       : event.ticket_price_cents;
