@@ -6,6 +6,7 @@ export interface ResolvedGuildSettings {
   verificationMessageUrl?: string;
   connectedRoleId?: string;
   exemptRoleId?: string;
+  reimbursementLogChannelId?: string;
 }
 
 export interface SettingsResolver {
@@ -21,6 +22,7 @@ export interface GuildSettingsInput {
   verificationMessageUrl?: string;
   connectedRoleId?: string;
   exemptRoleId?: string;
+  reimbursementLogChannelId?: string;
 }
 
 const CACHE_TTL_SECONDS = 60;
@@ -56,11 +58,16 @@ export class GuildSettingsService implements SettingsManager {
     const connectedRoleId =
       record?.connected_role_id ?? this.#envDefaults.connectedRoleId;
     const exemptRoleId = record?.exempt_role_id ?? this.#envDefaults.exemptRoleId;
+    const reimbursementLogChannelId =
+      record?.reimbursement_log_channel_id ?? this.#envDefaults.reimbursementLogChannelId;
 
     if (rsvpLogChannelId) value.rsvpLogChannelId = rsvpLogChannelId;
     if (verificationMessageUrl) value.verificationMessageUrl = verificationMessageUrl;
     if (connectedRoleId) value.connectedRoleId = connectedRoleId;
     if (exemptRoleId) value.exemptRoleId = exemptRoleId;
+    if (reimbursementLogChannelId) {
+      value.reimbursementLogChannelId = reimbursementLogChannelId;
+    }
 
     this.#cache.set(guildId, { value, fetchedAt: currentTimestamp() });
     return value;

@@ -222,6 +222,7 @@ export interface GuildSettingsRecord {
   verification_message_url: string | null;
   connected_role_id: string | null;
   exempt_role_id: string | null;
+  reimbursement_log_channel_id: string | null;
   updated_at: number;
 }
 
@@ -230,6 +231,41 @@ export interface GuildSettingsUpdate {
   verificationMessageUrl?: string | null;
   connectedRoleId?: string | null;
   exemptRoleId?: string | null;
+  reimbursementLogChannelId?: string | null;
+}
+
+export type ReimbursementStatus = "pending" | "submitted" | "paid";
+
+export interface ReimbursementRecord {
+  id: number;
+  guild_id: string;
+  user_id: string;
+  event_name: string;
+  description: string | null;
+  amount_cents: number | null;
+  receipt_url: string;
+  receipt_name: string;
+  log_channel_id: string | null;
+  log_message_id: string | null;
+  status: ReimbursementStatus;
+  created_at: number;
+  updated_at: number;
+  submitted_at: number | null;
+  paid_at: number | null;
+}
+
+export interface ReimbursementFilter {
+  userId?: string;
+  status?: ReimbursementStatus;
+}
+
+export interface PayoutDetailsRecord {
+  guild_id: string;
+  user_id: string;
+  account_name: string;
+  bsb: string;
+  account_number: string;
+  updated_at: number;
 }
 
 export class EventUnavailableError extends Error {
@@ -518,6 +554,41 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         exempt_role_id TEXT,
         updated_at DOUBLE PRECISION NOT NULL
       );
+
+      ALTER TABLE guild_settings
+        ADD COLUMN IF NOT EXISTS reimbursement_log_channel_id TEXT;
+
+      CREATE TABLE IF NOT EXISTS reimbursements (
+        id SERIAL PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        description TEXT,
+        amount_cents INTEGER CHECK (amount_cents > 0),
+        receipt_url TEXT NOT NULL,
+        receipt_name TEXT NOT NULL,
+        log_channel_id TEXT,
+        log_message_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK (status IN ('pending', 'submitted', 'paid')),
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
+        submitted_at DOUBLE PRECISION,
+        paid_at DOUBLE PRECISION
+      );
+
+      CREATE INDEX IF NOT EXISTS reimbursements_guild_status
+        ON reimbursements (guild_id, status, created_at);
+
+      CREATE TABLE IF NOT EXISTS payout_details (
+        guild_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        account_name TEXT NOT NULL,
+        bsb TEXT NOT NULL,
+        account_number TEXT NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
+        PRIMARY KEY (guild_id, user_id)
+      );
     `);
     await client.query("COMMIT");
   } catch (error) {
@@ -536,6 +607,23 @@ export async function initializeDatabase(connectionString: string): Promise<void
   } finally {
     await pool.end();
   }
+}
+
+function reimbursementWhere(
+  guildId: string,
+  filter: ReimbursementFilter,
+): { where: string; params: (string | number)[] } {
+  const conditions = ["guild_id = $1"];
+  const params: (string | number)[] = [guildId];
+  if (filter.userId) {
+    params.push(filter.userId);
+    conditions.push(`user_id = $${params.length}`);
+  }
+  if (filter.status) {
+    params.push(filter.status);
+    conditions.push(`status = $${params.length}`);
+  }
+  return { where: conditions.join(" AND "), params };
 }
 
 export class Store {
@@ -2307,14 +2395,16 @@ export class Store {
           verification_message_url,
           connected_role_id,
           exempt_role_id,
+          reimbursement_log_channel_id,
           updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (guild_id) DO UPDATE SET
           rsvp_log_channel_id = $2,
           verification_message_url = $3,
           connected_role_id = $4,
           exempt_role_id = $5,
-          updated_at = $6
+          reimbursement_log_channel_id = $6,
+          updated_at = $7
         RETURNING *
       `,
       [
@@ -2323,10 +2413,217 @@ export class Store {
         update.verificationMessageUrl ?? null,
         update.connectedRoleId ?? null,
         update.exemptRoleId ?? null,
+        update.reimbursementLogChannelId ?? null,
         now,
       ],
     );
     return result.rows[0] as GuildSettingsRecord;
+  }
+
+  async createReimbursement(
+    reimbursement: {
+      guildId: string;
+      userId: string;
+      eventName: string;
+      description?: string;
+      amountCents?: number;
+      receiptUrl: string;
+      receiptName: string;
+      logChannelId?: string;
+      logMessageId?: string;
+    },
+    now = currentTimestamp(),
+  ): Promise<ReimbursementRecord> {
+    const result = await this.#pool.query(
+      `
+        INSERT INTO reimbursements (
+          guild_id, user_id, event_name, description, amount_cents,
+          receipt_url, receipt_name, log_channel_id, log_message_id,
+          status, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending', $10, $10)
+        RETURNING *
+      `,
+      [
+        reimbursement.guildId,
+        reimbursement.userId,
+        reimbursement.eventName,
+        reimbursement.description ?? null,
+        reimbursement.amountCents ?? null,
+        reimbursement.receiptUrl,
+        reimbursement.receiptName,
+        reimbursement.logChannelId ?? null,
+        reimbursement.logMessageId ?? null,
+        now,
+      ],
+    );
+    return result.rows[0] as ReimbursementRecord;
+  }
+
+  async getReimbursement(
+    id: number,
+    guildId: string,
+  ): Promise<ReimbursementRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM reimbursements WHERE id = $1 AND guild_id = $2",
+      [id, guildId],
+    );
+    return result.rows[0] as ReimbursementRecord | undefined;
+  }
+
+  // Receipt fields are only overwritten when a replacement was uploaded.
+  async updateReimbursementDetails(
+    id: number,
+    guildId: string,
+    update: {
+      eventName: string;
+      description: string | null;
+      amountCents: number | null;
+      receipt?: {
+        url: string;
+        name: string;
+        logChannelId?: string;
+        logMessageId?: string;
+      };
+    },
+    now = currentTimestamp(),
+  ): Promise<ReimbursementRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        UPDATE reimbursements SET
+          event_name = $3,
+          description = $4,
+          amount_cents = $5,
+          receipt_url = COALESCE($6, receipt_url),
+          receipt_name = COALESCE($7, receipt_name),
+          log_channel_id = COALESCE($8, log_channel_id),
+          log_message_id = COALESCE($9, log_message_id),
+          updated_at = $10
+        WHERE id = $1 AND guild_id = $2
+        RETURNING *
+      `,
+      [
+        id,
+        guildId,
+        update.eventName,
+        update.description,
+        update.amountCents,
+        update.receipt?.url ?? null,
+        update.receipt?.name ?? null,
+        update.receipt?.logChannelId ?? null,
+        update.receipt?.logMessageId ?? null,
+        now,
+      ],
+    );
+    return result.rows[0] as ReimbursementRecord | undefined;
+  }
+
+  // Status only moves forward: pending → submitted → paid. Returns undefined
+  // when the reimbursement is missing or not in the expected prior status.
+  async advanceReimbursementStatus(
+    id: number,
+    guildId: string,
+    to: "submitted" | "paid",
+    now = currentTimestamp(),
+  ): Promise<ReimbursementRecord | undefined> {
+    const result =
+      to === "submitted"
+        ? await this.#pool.query(
+            `
+              UPDATE reimbursements
+              SET status = 'submitted', submitted_at = $3, updated_at = $3
+              WHERE id = $1 AND guild_id = $2 AND status = 'pending'
+              RETURNING *
+            `,
+            [id, guildId, now],
+          )
+        : await this.#pool.query(
+            `
+              UPDATE reimbursements
+              SET status = 'paid', paid_at = $3, updated_at = $3
+              WHERE id = $1 AND guild_id = $2 AND status = 'submitted'
+              RETURNING *
+            `,
+            [id, guildId, now],
+          );
+    return result.rows[0] as ReimbursementRecord | undefined;
+  }
+
+  async listReimbursements(
+    guildId: string,
+    filter: ReimbursementFilter,
+    offset: number,
+    limit: number,
+  ): Promise<{ reimbursements: ReimbursementRecord[]; total: number }> {
+    const { where, params } = reimbursementWhere(guildId, filter);
+    const [rows, count] = await Promise.all([
+      this.#pool.query(
+        `
+          SELECT * FROM reimbursements
+          WHERE ${where}
+          ORDER BY created_at DESC, id DESC
+          LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+        `,
+        [...params, limit, offset],
+      ),
+      this.#pool.query(
+        `SELECT COUNT(*)::integer AS count FROM reimbursements WHERE ${where}`,
+        params,
+      ),
+    ]);
+    return {
+      reimbursements: rows.rows as ReimbursementRecord[],
+      total: Number((count.rows[0] as { count: number }).count),
+    };
+  }
+
+  async listAllReimbursements(
+    guildId: string,
+    filter: ReimbursementFilter,
+  ): Promise<ReimbursementRecord[]> {
+    const { where, params } = reimbursementWhere(guildId, filter);
+    const result = await this.#pool.query(
+      `
+        SELECT * FROM reimbursements
+        WHERE ${where}
+        ORDER BY created_at DESC, id DESC
+      `,
+      params,
+    );
+    return result.rows as ReimbursementRecord[];
+  }
+
+  async getPayoutDetails(
+    guildId: string,
+    userId: string,
+  ): Promise<PayoutDetailsRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM payout_details WHERE guild_id = $1 AND user_id = $2",
+      [guildId, userId],
+    );
+    return result.rows[0] as PayoutDetailsRecord | undefined;
+  }
+
+  async upsertPayoutDetails(
+    guildId: string,
+    userId: string,
+    details: { accountName: string; bsb: string; accountNumber: string },
+    now = currentTimestamp(),
+  ): Promise<PayoutDetailsRecord> {
+    const result = await this.#pool.query(
+      `
+        INSERT INTO payout_details (
+          guild_id, user_id, account_name, bsb, account_number, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (guild_id, user_id) DO UPDATE SET
+          account_name = $3,
+          bsb = $4,
+          account_number = $5,
+          updated_at = $6
+        RETURNING *
+      `,
+      [guildId, userId, details.accountName, details.bsb, details.accountNumber, now],
+    );
+    return result.rows[0] as PayoutDetailsRecord;
   }
 
   async countRsvpHistory(eventId: number): Promise<number> {

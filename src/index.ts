@@ -19,6 +19,7 @@ import {
 } from "./database.js";
 import { EventController } from "./event-controller.js";
 import { startHttpServer } from "./http.js";
+import { ReimbursementController } from "./reimbursement-controller.js";
 import { GuildSettingsService } from "./settings.js";
 import { TicketingService } from "./ticketing.js";
 
@@ -55,6 +56,7 @@ const ticketing = new TicketingService(
   (eventId) => refresher.markDirty(eventId),
 );
 const eventController = new EventController(store, audit, ticketing, settings, refresher);
+const reimbursementController = new ReimbursementController(store, settings);
 const httpServer = startHttpServer(client, ticketing, config.httpPort, () => {
   void audit.flush();
 });
@@ -113,15 +115,19 @@ client.once(Events.ClientReady, async (readyClient) => {
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
-      await eventController.handleCommand(interaction);
+      (await eventController.handleCommand(interaction)) ||
+        (await reimbursementController.handleCommand(interaction));
     } else if (interaction.isMessageContextMenuCommand()) {
       await eventController.handleContextMenu(interaction);
     } else if (interaction.isModalSubmit()) {
-      await eventController.handleModal(interaction);
+      (await eventController.handleModal(interaction)) ||
+        (await reimbursementController.handleModal(interaction));
     } else if (interaction.isButton()) {
-      await eventController.handleButton(interaction);
+      (await eventController.handleButton(interaction)) ||
+        (await reimbursementController.handleButton(interaction));
     } else if (interaction.isStringSelectMenu()) {
-      await eventController.handleSelect(interaction);
+      (await eventController.handleSelect(interaction)) ||
+        (await reimbursementController.handleSelect(interaction));
     }
   } catch (error) {
     console.error(`Failed to handle interaction ${interaction.id}`, error);

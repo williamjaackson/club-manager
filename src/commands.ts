@@ -63,6 +63,39 @@ export const commandDefinitions = [
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("reimbursement")
+    .setDescription("Submit and manage receipt reimbursements")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((subcommand) =>
+      subcommand.setName("create").setDescription("Submit a receipt for reimbursement"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("config")
+        .setDescription("Set the payout details used for your reimbursements"),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("list")
+        .setDescription("List reimbursements; without options it shows your own")
+        .addStringOption((option) =>
+          option
+            .setName("status")
+            .setDescription("Filter every member's reimbursements by status")
+            .addChoices(
+              { name: "pending", value: "pending" },
+              { name: "submitted", value: "submitted" },
+              { name: "paid", value: "paid" },
+            ),
+        )
+        .addUserOption((option) =>
+          option
+            .setName("member")
+            .setDescription("Show a specific member's reimbursements"),
+        ),
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("config")
     .setDescription("Configure Club Manager for this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

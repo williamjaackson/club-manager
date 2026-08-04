@@ -329,6 +329,9 @@ export class EventController {
       interaction.fields.getTextInputValue(configIds.verificationUrl),
       "Verification message link",
     );
+    const reimbursementChannel = interaction.fields
+      .getSelectedChannels(configIds.reimbursementChannel, false, [ChannelType.GuildText])
+      ?.first();
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const saved = await this.#settings.update(interaction.guildId, {
@@ -336,6 +339,9 @@ export class EventController {
       ...(connectedRole ? { connectedRoleId: connectedRole.id } : {}),
       ...(exemptRole ? { exemptRoleId: exemptRole.id } : {}),
       ...(verificationUrl ? { verificationMessageUrl: verificationUrl } : {}),
+      ...(reimbursementChannel
+        ? { reimbursementLogChannelId: reimbursementChannel.id }
+        : {}),
     });
     await interaction.editReply({ content: describeSettings(saved), components: [] });
   }
