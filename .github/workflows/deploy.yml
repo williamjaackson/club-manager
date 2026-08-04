@@ -73,6 +73,7 @@ jobs:
             fi
             ssh $HOST_KEY_OPT -o ConnectTimeout=30 -p "$PORT" -i /tmp/deploy_key \
               "${VPS_SSH_USER:-root}@${{ secrets.VPS_HOST }}" '
+              set -euo pipefail
               cd /opt/club-manager
               git fetch origin main
               git switch main
