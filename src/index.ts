@@ -107,6 +107,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 
   audit.start();
   refresher.start();
+  ticketing.start();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -165,6 +166,7 @@ async function shutdown(signal: string): Promise<void> {
   console.log(`${signal} received; shutting down`);
   audit.stop();
   refresher.stop();
+  ticketing.stop();
   httpServer.close();
   client.destroy();
   await store.close();
