@@ -158,6 +158,7 @@ export interface TicketOrderRecord {
   paid_at: number | null;
   refunded_at: number | null;
   checkout_expired_at: number | null;
+  admin_hold: boolean;
 }
 
 export interface TicketCheckoutReservation {
@@ -423,6 +424,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT;
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS refunded_at DOUBLE PRECISION;
       ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS checkout_expired_at DOUBLE PRECISION;
+      ALTER TABLE ticket_orders ADD COLUMN IF NOT EXISTS admin_hold BOOLEAN NOT NULL DEFAULT FALSE;
       ALTER TABLE ticket_orders DROP CONSTRAINT IF EXISTS ticket_orders_status_check;
       ALTER TABLE ticket_orders ADD CONSTRAINT ticket_orders_status_check
         CHECK (status IN ('pending', 'paid', 'refunded'));
@@ -1146,7 +1148,11 @@ export class Store {
         return { order: existing, alreadyPaid: true };
       }
 
-      if (existing?.status === "pending" && existing.reservation_expires_at > now) {
+      if (
+        existing?.status === "pending" &&
+        existing.reservation_expires_at > now &&
+        !(existing.admin_hold && existing.checkout_expires_at <= now)
+      ) {
         await client.query("COMMIT");
         return { order: existing, alreadyPaid: false };
       }
@@ -1157,12 +1163,13 @@ export class Store {
           FROM ticket_orders
           WHERE
             event_id = $1
+            AND user_id <> $3
             AND (
               status = 'paid'
               OR (status = 'pending' AND reservation_expires_at > $2)
             )
         `,
-        [eventId, now],
+        [eventId, now, userId],
       );
       const reservedCount = Number((capacityResult.rows[0] as { count: number }).count);
 
@@ -1192,7 +1199,7 @@ export class Store {
               currency = NULL,
               updated_at = $1,
               checkout_expires_at = $2,
-              reservation_expires_at = $3,
+              reservation_expires_at = GREATEST(reservation_expires_at, $3),
               paid_at = NULL,
               refunded_at = NULL,
               checkout_expired_at = NULL
@@ -1230,6 +1237,124 @@ export class Store {
     } finally {
       client.release();
     }
+  }
+
+  // Reserves a seat for a member without a checkout: the order is pending
+  // with no Stripe session, an already-lapsed checkout window, and a
+  // reservation that lasts until the hold expires. It counts as "on hold"
+  // and blocks capacity like any live reservation.
+  async createTicketHold(
+    eventId: number,
+    userId: string,
+    holdUntil: number,
+    now = currentTimestamp(),
+  ): Promise<TicketOrderRecord> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const event = await this.#getEvent(client, eventId, true);
+      if (
+        event?.status !== "published" ||
+        event.ticket_price_cents === null ||
+        typeof event.cancelled_at === "number"
+      ) {
+        throw new EventUnavailableError();
+      }
+
+      const existingResult = await client.query(
+        `
+          SELECT * FROM ticket_orders
+          WHERE event_id = $1 AND user_id = $2
+          FOR UPDATE
+        `,
+        [eventId, userId],
+      );
+      const existing = existingResult.rows[0] as TicketOrderRecord | undefined;
+      if (existing?.status === "paid") {
+        throw new Error("That member already has a paid ticket for this event.");
+      }
+
+      let order: TicketOrderRecord;
+      if (existing) {
+        const updated = await client.query(
+          `
+            UPDATE ticket_orders
+            SET
+              status = 'pending',
+              admin_hold = TRUE,
+              reservation_expires_at = $1,
+              updated_at = $2
+            WHERE id = $3
+            RETURNING *
+          `,
+          [holdUntil, now, existing.id],
+        );
+        order = updated.rows[0] as TicketOrderRecord;
+      } else {
+        const capacity = await client.query(
+          `
+            SELECT COUNT(*)::integer AS count
+            FROM ticket_orders
+            WHERE
+              event_id = $1
+              AND (
+                status = 'paid'
+                OR (status = 'pending' AND reservation_expires_at > $2)
+              )
+          `,
+          [eventId, now],
+        );
+        const reserved = Number((capacity.rows[0] as { count: number }).count);
+        if (event.ticket_limit !== null && reserved >= event.ticket_limit) {
+          throw new TicketSoldOutError();
+        }
+
+        const inserted = await client.query(
+          `
+            INSERT INTO ticket_orders (
+              event_id,
+              user_id,
+              status,
+              admin_hold,
+              created_at,
+              updated_at,
+              checkout_expires_at,
+              reservation_expires_at
+            ) VALUES ($1, $2, 'pending', TRUE, $3, $4, $5, $6)
+            RETURNING *
+          `,
+          [eventId, userId, now, now, now, holdUntil],
+        );
+        order = inserted.rows[0] as TicketOrderRecord;
+      }
+
+      await client.query("COMMIT");
+      return order;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Releasing is refused while a live checkout session exists so a payment
+  // in flight can never be orphaned.
+  async releaseTicketHold(eventId: number, userId: string): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        DELETE FROM ticket_orders
+        WHERE
+          event_id = $1
+          AND user_id = $2
+          AND status = 'pending'
+          AND admin_hold = TRUE
+          AND (checkout_session_id IS NULL OR checkout_expired_at IS NOT NULL)
+      `,
+      [eventId, userId],
+    );
+    return result.rowCount === 1;
   }
 
   async attachTicketCheckout(

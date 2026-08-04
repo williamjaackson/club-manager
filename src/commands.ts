@@ -24,6 +24,53 @@ export const commandDefinitions = [
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("ticket")
+    .setDescription("Manage held tickets for paid events")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("hold")
+        .setDescription("Hold a seat for a member so nobody else can take it")
+        .addUserOption((option) =>
+          option
+            .setName("member")
+            .setDescription("Member the seat is held for")
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("event")
+            .setDescription("Paste the event announcement link")
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option.setName("for").setDescription("Hold duration such as 30m, 12h, or 2d"),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("until")
+            .setDescription("Hold until YYYY-MM-DD HH:mm Brisbane time"),
+        ),
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("release")
+        .setDescription("Release a held seat")
+        .addUserOption((option) =>
+          option
+            .setName("member")
+            .setDescription("Member whose held seat is released")
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("event")
+            .setDescription("Paste the event announcement link")
+            .setRequired(true),
+        ),
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("coupon")
     .setDescription("Give a member a discount coupon for paid events")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

@@ -82,6 +82,7 @@ import {
   formatScheduleText,
   optionalBrisbaneDateTime,
   parseBrisbaneDateTime,
+  parseDurationSeconds,
 } from "./time.js";
 
 export class EventController {
@@ -127,6 +128,11 @@ export class EventController {
 
     if (interaction.commandName === "coupon") {
       await this.#giveCoupon(interaction);
+      return true;
+    }
+
+    if (interaction.commandName === "ticket") {
+      await this.#manageTicketHold(interaction);
       return true;
     }
 
@@ -741,6 +747,92 @@ export class EventController {
   ): Promise<void> {
     await interaction.editReply({
       content: "This event form expired. Run `/event create` again.",
+      components: [],
+    });
+  }
+
+  async #manageTicketHold(interaction: ChatInputCommandInteraction): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Tickets can only be managed inside a server.");
+    }
+
+    const subcommand = interaction.options.getSubcommand();
+    const member = interaction.options.getUser("member", true);
+    const link = parseAnnouncementLink(interaction.options.getString("event", true));
+    if (!link || link.guildId !== interaction.guildId) {
+      throw new Error("Paste an event announcement link from this server.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const event = await this.#store.getEventByMessageId(
+      interaction.guildId,
+      link.messageId,
+    );
+    if (event?.status !== "published") {
+      throw new Error("That link is not a published event announcement.");
+    }
+    if (event.ticket_price_cents === null) {
+      throw new Error("Seats can only be held on paid events.");
+    }
+
+    if (subcommand === "release") {
+      const released = await this.#store.releaseTicketHold(event.id, member.id);
+      if (released) this.#refresher.markDirty(event.id);
+      await interaction.editReply({
+        content: released
+          ? `🎟️ Released the held seat for <@${member.id}> on **${event.title}**.`
+          : `<@${member.id}> has no releasable held seat on **${event.title}** ` +
+            "(no hold, or a checkout is in progress).",
+        components: [],
+      });
+      return;
+    }
+
+    const forInput = interaction.options.getString("for")?.trim();
+    const untilInput = interaction.options.getString("until")?.trim();
+    if (forInput && untilInput) {
+      throw new Error("Use either `for` or `until`, not both.");
+    }
+
+    let holdUntil: number;
+    if (forInput) {
+      holdUntil = currentTimestamp() + parseDurationSeconds(forInput, "Hold duration");
+    } else if (untilInput) {
+      holdUntil = parseBrisbaneDateTime(untilInput, "Hold until");
+    } else {
+      const closeAt = event.ticket_sales_close_at ?? event.ends_at;
+      if (typeof closeAt !== "number") {
+        throw new Error(
+          "This event has no close time; give the hold a `for` duration or an `until` time.",
+        );
+      }
+      holdUntil = closeAt;
+    }
+    if (holdUntil <= currentTimestamp()) {
+      throw new Error("The hold must end in the future.");
+    }
+
+    await this.#store.createTicketHold(event.id, member.id, holdUntil);
+    this.#refresher.markDirty(event.id);
+
+    let delivery = "They have been notified by DM.";
+    try {
+      const user = await interaction.client.users.fetch(member.id);
+      await user.send(
+        `🎟️ A seat for **${event.title}** is being held for you until ` +
+          `<t:${Math.floor(holdUntil)}:F> (<t:${Math.floor(holdUntil)}:R>). ` +
+          "Use the Buy ticket button on the announcement whenever you're ready.",
+      );
+    } catch {
+      delivery = "⚠️ They could not be DMed (privacy settings).";
+    }
+
+    await interaction.editReply({
+      content:
+        `🎟️ Holding a seat for <@${member.id}> on **${event.title}** until ` +
+        `<t:${Math.floor(holdUntil)}:F>. It shows as on hold and nobody else ` +
+        `can take it. ${delivery}`,
       components: [],
     });
   }
