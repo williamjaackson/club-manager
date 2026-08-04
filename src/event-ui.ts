@@ -304,7 +304,9 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
     }\n`;
   }
   if (typeof pending.ticket_sales_close_at === "number") {
-    body += `⏳ Sales close <t:${pending.ticket_sales_close_at}:F>\n`;
+    body += `⏳ ${
+      typeof pending.ticket_price_cents === "number" ? "Ticket sales" : "RSVPs"
+    } close <t:${pending.ticket_sales_close_at}:F>\n`;
   }
   if (pending.announcement) {
     body += `\n${pending.announcement}\n`;
