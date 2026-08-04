@@ -32,20 +32,29 @@ import {
   buildPublicEventMessage,
   buildRsvpComplete,
   buildRsvpPrompt,
+  buildTicketCheckout,
+  buildTicketConfirmed,
   eventIds,
 } from "./event-ui.js";
+import type { TicketingService } from "./ticketing.js";
 
 export class EventController {
   readonly #store: Store;
   readonly #audit: AuditLogger;
+  readonly #ticketing: TicketingService;
   readonly #webhookLookups = new Map<
     string,
     Promise<Webhook<WebhookType.Incoming>>
   >();
 
-  constructor(store: Store, audit: AuditLogger) {
+  constructor(
+    store: Store,
+    audit: AuditLogger,
+    ticketing: TicketingService,
+  ) {
     this.#store = store;
     this.#audit = audit;
+    this.#ticketing = ticketing;
   }
 
   async handleCommand(
@@ -73,7 +82,14 @@ export class EventController {
     }
 
     const artwork = interaction.options.getAttachment("artwork");
+    const ticketPrice = interaction.options.getNumber("ticket_price");
+    const ticketLimit = interaction.options.getInteger("ticket_limit");
     this.#validateArtwork(artwork);
+    const ticketPriceCents = this.#ticketPriceCents(ticketPrice);
+
+    if (ticketLimit !== null && ticketPriceCents === undefined) {
+      throw new Error("Set ticket_price when using ticket_limit.");
+    }
 
     const token = randomBytes(16).toString("hex");
     const pending: NewPendingEventCreate = {
@@ -86,6 +102,11 @@ export class EventController {
       pending.artworkUrl = artwork.url;
       pending.artworkName = safeAttachmentName(artwork.name);
     }
+    if (ticketPriceCents !== undefined) {
+      pending.ticketPriceCents = ticketPriceCents;
+      pending.ticketCurrency = "aud";
+    }
+    if (ticketLimit !== null) pending.ticketLimit = ticketLimit;
 
     await Promise.all([
       this.#store.createPendingEventCreate(pending),
@@ -147,6 +168,13 @@ export class EventController {
 
     if (pending.artwork_url) draft.artworkUrl = pending.artwork_url;
     if (pending.artwork_name) draft.artworkName = pending.artwork_name;
+    if (pending.ticket_price_cents) {
+      draft.ticketPriceCents = pending.ticket_price_cents;
+    }
+    if (pending.ticket_currency) {
+      draft.ticketCurrency = pending.ticket_currency;
+    }
+    if (pending.ticket_limit) draft.ticketLimit = pending.ticket_limit;
 
     const event = await this.#store.createEventDraft(draft);
 
@@ -158,7 +186,7 @@ export class EventController {
     const parsed = parseEventButton(interaction.customId);
     if (!parsed) return false;
 
-    if (parsed.action === "rsvp") {
+    if (parsed.action === "rsvp" || parsed.action === "buy") {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } else {
       await interaction.deferUpdate();
@@ -187,6 +215,9 @@ export class EventController {
         return true;
       case "rsvp":
         await this.#showRsvp(interaction, event);
+        return true;
+      case "buy":
+        await this.#buyTicket(interaction, event);
         return true;
       case "rsvp-confirm":
         await this.#confirmRsvp(interaction, event);
@@ -374,6 +405,36 @@ export class EventController {
     void this.#audit.flush();
   }
 
+  async #buyTicket(
+    interaction: ButtonInteraction,
+    event: EventRecord,
+  ): Promise<void> {
+    this.#requirePublished(event);
+
+    if (interaction.message.id !== event.message_id) {
+      throw new Error("Use the Buy ticket button on the original announcement.");
+    }
+
+    if (!this.#canRsvp(interaction)) {
+      await interaction.editReply(this.#verificationRequiredReply());
+      return;
+    }
+
+    if (!event.ticket_price_cents || !event.ticket_currency) {
+      throw new Error("This event does not have paid tickets.");
+    }
+
+    const checkout = await this.#ticketing.startCheckout(
+      event,
+      interaction.user.id,
+    );
+    await interaction.editReply(
+      checkout.alreadyPaid
+        ? buildTicketConfirmed(event)
+        : buildTicketCheckout(event, checkout.checkoutUrl),
+    );
+  }
+
   async #cancelRsvp(
     interaction: ButtonInteraction,
     event: EventRecord,
@@ -425,7 +486,7 @@ export class EventController {
   #verificationRequiredReply(): { content: string; embeds: []; components: [] } {
     return {
       content:
-        "Hey, please verify first, then try RSVPing again: " +
+        "Hey, please verify first, then try again: " +
         "https://discord.com/channels/1214387742293626940/1257896790934421535/1348722902375071785",
       embeds: [],
       components: [],
@@ -437,11 +498,27 @@ export class EventController {
       throw new Error("Event artwork must be an image.");
     }
   }
+
+  #ticketPriceCents(price: number | null): number | undefined {
+    if (price === null) return undefined;
+    const cents = Math.round(price * 100);
+
+    if (Math.abs(price * 100 - cents) > 1e-6) {
+      throw new Error("ticket_price can have at most two decimal places.");
+    }
+
+    if (cents < 50) {
+      throw new Error("ticket_price must be at least A$0.50.");
+    }
+
+    return cents;
+  }
 }
 
 type EventButtonAction =
   | "publish"
   | "discard"
+  | "buy"
   | "rsvp"
   | "rsvp-confirm"
   | "cancel-confirm"
@@ -458,6 +535,7 @@ function parseEventButton(
   const actions: EventButtonAction[] = [
     "publish",
     "discard",
+    "buy",
     "rsvp",
     "rsvp-confirm",
     "cancel-confirm",

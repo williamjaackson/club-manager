@@ -14,6 +14,7 @@ export type EventStatus =
   | "discarded";
 export type RsvpStatus = "active" | "cancelled";
 export type AuditAction = "rsvp" | "cancel";
+export type TicketOrderStatus = "pending" | "paid";
 
 export interface EventRecord {
   id: number;
@@ -27,6 +28,9 @@ export interface EventRecord {
   announcement: string;
   artwork_url: string | null;
   artwork_name: string | null;
+  ticket_price_cents: number | null;
+  ticket_currency: string | null;
+  ticket_limit: number | null;
   status: EventStatus;
   created_at: number;
   published_at: number | null;
@@ -42,6 +46,9 @@ export interface NewEventDraft {
   announcement: string;
   artworkUrl?: string;
   artworkName?: string;
+  ticketPriceCents?: number;
+  ticketCurrency?: string;
+  ticketLimit?: number;
 }
 
 export interface PendingEventCreateRecord {
@@ -50,6 +57,9 @@ export interface PendingEventCreateRecord {
   guild_id: string;
   artwork_url: string | null;
   artwork_name: string | null;
+  ticket_price_cents: number | null;
+  ticket_currency: string | null;
+  ticket_limit: number | null;
   created_at: number;
   expires_at: number;
 }
@@ -60,6 +70,34 @@ export interface NewPendingEventCreate {
   guildId: string;
   artworkUrl?: string;
   artworkName?: string;
+  ticketPriceCents?: number;
+  ticketCurrency?: string;
+  ticketLimit?: number;
+}
+
+export interface TicketOrderRecord {
+  id: number;
+  event_id: number;
+  user_id: string;
+  status: TicketOrderStatus;
+  attempt: number;
+  checkout_session_id: string | null;
+  checkout_url: string | null;
+  stripe_payment_intent_id: string | null;
+  customer_email: string | null;
+  customer_name: string | null;
+  amount_total: number | null;
+  currency: string | null;
+  created_at: number;
+  updated_at: number;
+  checkout_expires_at: number;
+  reservation_expires_at: number;
+  paid_at: number | null;
+}
+
+export interface TicketCheckoutReservation {
+  order: TicketOrderRecord;
+  alreadyPaid: boolean;
 }
 
 export interface AuditOutboxRecord {
@@ -82,6 +120,13 @@ export class EventUnavailableError extends Error {
   constructor() {
     super("This event is no longer accepting RSVP changes.");
     this.name = "EventUnavailableError";
+  }
+}
+
+export class TicketSoldOutError extends Error {
+  constructor() {
+    super("Tickets for this event are sold out.");
+    this.name = "TicketSoldOutError";
   }
 }
 
@@ -123,11 +168,18 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         announcement TEXT NOT NULL,
         artwork_url TEXT,
         artwork_name TEXT,
+        ticket_price_cents INTEGER,
+        ticket_currency TEXT,
+        ticket_limit INTEGER,
         status TEXT NOT NULL DEFAULT 'draft'
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at DOUBLE PRECISION NOT NULL,
         published_at DOUBLE PRECISION
       );
+
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_currency TEXT;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -135,9 +187,43 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         guild_id TEXT NOT NULL,
         artwork_url TEXT,
         artwork_name TEXT,
+        ticket_price_cents INTEGER,
+        ticket_currency TEXT,
+        ticket_limit INTEGER,
         created_at DOUBLE PRECISION NOT NULL,
         expires_at DOUBLE PRECISION NOT NULL
       );
+
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS ticket_currency TEXT;
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS ticket_limit INTEGER;
+
+      CREATE TABLE IF NOT EXISTS ticket_orders (
+        id SERIAL PRIMARY KEY,
+        event_id INTEGER NOT NULL REFERENCES events(id),
+        user_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending', 'paid')),
+        attempt INTEGER NOT NULL DEFAULT 1,
+        checkout_session_id TEXT UNIQUE,
+        checkout_url TEXT,
+        stripe_payment_intent_id TEXT,
+        customer_email TEXT,
+        customer_name TEXT,
+        amount_total INTEGER,
+        currency TEXT,
+        created_at DOUBLE PRECISION NOT NULL,
+        updated_at DOUBLE PRECISION NOT NULL,
+        checkout_expires_at DOUBLE PRECISION NOT NULL,
+        reservation_expires_at DOUBLE PRECISION NOT NULL,
+        paid_at DOUBLE PRECISION,
+        UNIQUE (event_id, user_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS ticket_orders_capacity
+        ON ticket_orders (event_id, status, reservation_expires_at);
 
       CREATE TABLE IF NOT EXISTS rsvps (
         event_id INTEGER NOT NULL REFERENCES events(id),
@@ -219,8 +305,11 @@ export class Store {
           announcement,
           artwork_url,
           artwork_name,
+          ticket_price_cents,
+          ticket_currency,
+          ticket_limit,
           created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
       `,
       [
@@ -233,6 +322,9 @@ export class Store {
         draft.announcement,
         draft.artworkUrl ?? null,
         draft.artworkName ?? null,
+        draft.ticketPriceCents ?? null,
+        draft.ticketCurrency ?? null,
+        draft.ticketLimit ?? null,
         now,
       ],
     );
@@ -261,9 +353,12 @@ export class Store {
           guild_id,
           artwork_url,
           artwork_name,
+          ticket_price_cents,
+          ticket_currency,
+          ticket_limit,
           created_at,
           expires_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       `,
       [
         pending.token,
@@ -271,6 +366,9 @@ export class Store {
         pending.guildId,
         pending.artworkUrl ?? null,
         pending.artworkName ?? null,
+        pending.ticketPriceCents ?? null,
+        pending.ticketCurrency ?? null,
+        pending.ticketLimit ?? null,
         now,
         now + lifetimeSeconds,
       ],
@@ -395,6 +493,284 @@ export class Store {
     now = currentTimestamp(),
   ): Promise<RsvpChange> {
     return this.#changeRsvp(eventId, userId, "cancelled", "cancel", now);
+  }
+
+  async getTicketOrder(
+    id: number,
+  ): Promise<TicketOrderRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM ticket_orders WHERE id = $1",
+      [id],
+    );
+    return result.rows[0] as TicketOrderRecord | undefined;
+  }
+
+  async getTicketOrderForMember(
+    eventId: number,
+    userId: string,
+  ): Promise<TicketOrderRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        SELECT *
+        FROM ticket_orders
+        WHERE event_id = $1 AND user_id = $2
+      `,
+      [eventId, userId],
+    );
+    return result.rows[0] as TicketOrderRecord | undefined;
+  }
+
+  async getTicketOrderByCheckoutSession(
+    checkoutSessionId: string,
+  ): Promise<TicketOrderRecord | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM ticket_orders WHERE checkout_session_id = $1",
+      [checkoutSessionId],
+    );
+    return result.rows[0] as TicketOrderRecord | undefined;
+  }
+
+  async reserveTicketCheckout(
+    eventId: number,
+    userId: string,
+    now = currentTimestamp(),
+    checkoutLifetimeSeconds = 31 * 60,
+    webhookGraceSeconds = 5 * 60,
+  ): Promise<TicketCheckoutReservation> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const event = await this.#getEvent(client, eventId, true);
+
+      if (
+        !event ||
+        event.status !== "published" ||
+        !event.ticket_price_cents ||
+        !event.ticket_currency
+      ) {
+        throw new EventUnavailableError();
+      }
+
+      const existingResult = await client.query(
+        `
+          SELECT *
+          FROM ticket_orders
+          WHERE event_id = $1 AND user_id = $2
+          FOR UPDATE
+        `,
+        [eventId, userId],
+      );
+      const existing = existingResult.rows[0] as
+        | TicketOrderRecord
+        | undefined;
+
+      if (existing?.status === "paid") {
+        await client.query("COMMIT");
+        return { order: existing, alreadyPaid: true };
+      }
+
+      if (
+        existing?.status === "pending" &&
+        existing.reservation_expires_at > now
+      ) {
+        await client.query("COMMIT");
+        return { order: existing, alreadyPaid: false };
+      }
+
+      const capacityResult = await client.query(
+        `
+          SELECT COUNT(*)::integer AS count
+          FROM ticket_orders
+          WHERE
+            event_id = $1
+            AND (
+              status = 'paid'
+              OR (status = 'pending' AND reservation_expires_at > $2)
+            )
+        `,
+        [eventId, now],
+      );
+      const reservedCount = Number(
+        (capacityResult.rows[0] as { count: number }).count,
+      );
+
+      if (event.ticket_limit !== null && reservedCount >= event.ticket_limit) {
+        throw new TicketSoldOutError();
+      }
+
+      const checkoutExpiresAt = now + checkoutLifetimeSeconds;
+      const reservationExpiresAt = checkoutExpiresAt + webhookGraceSeconds;
+      let orderResult;
+
+      if (existing) {
+        orderResult = await client.query(
+          `
+            UPDATE ticket_orders
+            SET
+              status = 'pending',
+              attempt = attempt + 1,
+              checkout_session_id = NULL,
+              checkout_url = NULL,
+              stripe_payment_intent_id = NULL,
+              customer_email = NULL,
+              customer_name = NULL,
+              amount_total = NULL,
+              currency = NULL,
+              updated_at = $1,
+              checkout_expires_at = $2,
+              reservation_expires_at = $3,
+              paid_at = NULL
+            WHERE id = $4
+            RETURNING *
+          `,
+          [now, checkoutExpiresAt, reservationExpiresAt, existing.id],
+        );
+      } else {
+        orderResult = await client.query(
+          `
+            INSERT INTO ticket_orders (
+              event_id,
+              user_id,
+              status,
+              created_at,
+              updated_at,
+              checkout_expires_at,
+              reservation_expires_at
+            ) VALUES ($1, $2, 'pending', $3, $4, $5, $6)
+            RETURNING *
+          `,
+          [
+            eventId,
+            userId,
+            now,
+            now,
+            checkoutExpiresAt,
+            reservationExpiresAt,
+          ],
+        );
+      }
+
+      await client.query("COMMIT");
+      return {
+        order: orderResult.rows[0] as TicketOrderRecord,
+        alreadyPaid: false,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async attachTicketCheckout(
+    orderId: number,
+    attempt: number,
+    checkoutSessionId: string,
+    checkoutUrl: string,
+    now = currentTimestamp(),
+  ): Promise<TicketOrderRecord> {
+    const result = await this.#pool.query(
+      `
+        UPDATE ticket_orders
+        SET
+          checkout_session_id = $1,
+          checkout_url = $2,
+          updated_at = $3
+        WHERE
+          id = $4
+          AND attempt = $5
+          AND status = 'pending'
+          AND (checkout_session_id IS NULL OR checkout_session_id = $1)
+        RETURNING *
+      `,
+      [checkoutSessionId, checkoutUrl, now, orderId, attempt],
+    );
+    const order = result.rows[0] as TicketOrderRecord | undefined;
+
+    if (!order) {
+      throw new Error("This ticket checkout reservation is no longer active.");
+    }
+
+    return order;
+  }
+
+  async fulfillTicketOrder(
+    orderId: number,
+    checkoutSessionId: string,
+    details: {
+      paymentIntentId?: string;
+      customerEmail?: string;
+      customerName?: string;
+      amountTotal: number;
+      currency: string;
+    },
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        "SELECT * FROM ticket_orders WHERE id = $1 FOR UPDATE",
+        [orderId],
+      );
+      const order = result.rows[0] as TicketOrderRecord | undefined;
+
+      if (!order) throw new Error("Ticket order does not exist.");
+
+      if (order.status === "paid") {
+        if (order.checkout_session_id !== checkoutSessionId) {
+          throw new Error("Ticket order was paid by a different Checkout Session.");
+        }
+
+        await client.query("COMMIT");
+        return false;
+      }
+
+      if (
+        order.checkout_session_id &&
+        order.checkout_session_id !== checkoutSessionId
+      ) {
+        throw new Error("Checkout Session does not match this ticket order.");
+      }
+
+      await client.query(
+        `
+          UPDATE ticket_orders
+          SET
+            status = 'paid',
+            checkout_session_id = $1,
+            stripe_payment_intent_id = $2,
+            customer_email = $3,
+            customer_name = $4,
+            amount_total = $5,
+            currency = $6,
+            updated_at = $7,
+            paid_at = $8
+          WHERE id = $9
+        `,
+        [
+          checkoutSessionId,
+          details.paymentIntentId ?? null,
+          details.customerEmail ?? null,
+          details.customerName ?? null,
+          details.amountTotal,
+          details.currency,
+          now,
+          now,
+          orderId,
+        ],
+      );
+      await client.query("COMMIT");
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async #changeRsvp(

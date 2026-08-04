@@ -123,7 +123,18 @@ export function buildPublicEventMessage(
     .setLabel("RSVP")
     .setEmoji("🎟️")
     .setStyle(ButtonStyle.Secondary);
+  const buttons = [rsvp];
   const files: AttachmentBuilder[] = [];
+
+  if (event.ticket_price_cents && event.ticket_currency) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`event:buy:${event.id}`)
+        .setLabel(`Buy ticket — ${formatTicketPrice(event)}`)
+        .setEmoji("💳")
+        .setStyle(ButtonStyle.Success),
+    );
+  }
 
   if (event.artwork_url && event.artwork_name) {
     files.push(
@@ -134,7 +145,7 @@ export function buildPublicEventMessage(
   return {
     content: buildAnnouncementText(event),
     components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(rsvp),
+      new ActionRowBuilder<ButtonBuilder>().addComponents(buttons),
     ],
     files,
   };
@@ -153,8 +164,9 @@ export function buildRsvpPrompt(event: EventRecord): EventReplyOptions {
     content: buildCompactRsvpText(
       event,
       "Would you like to RSVP?",
-      "🎉 **First-event discount applied**\n" +
-        "~~$5.00~~ → **$FREE**",
+      event.ticket_price_cents
+        ? "RSVP is free, but it does not include a paid ticket."
+        : "No payment is required to RSVP.",
     ),
     embeds: [],
     components: [
@@ -187,8 +199,38 @@ export function buildRsvpComplete(
 ): EventReplyOptions {
   return {
     content: changed
-      ? "✅ RSVP confirmed. Your **$5.00 first-event discount** has been applied."
+      ? "✅ RSVP confirmed."
       : "✅ You’re already RSVP’d.",
+    embeds: [],
+    components: [],
+  };
+}
+
+export function buildTicketCheckout(
+  event: EventRecord,
+  checkoutUrl: string,
+): EventReplyOptions {
+  const checkout = new ButtonBuilder()
+    .setLabel("Open secure checkout")
+    .setURL(checkoutUrl)
+    .setStyle(ButtonStyle.Link);
+  return {
+    content:
+      `A ticket for **${event.title}** is reserved for about 30 minutes.\n\n` +
+      `Price: **${formatTicketPrice(event)}**\n` +
+      "Stripe will collect payment and email your receipt.",
+    embeds: [],
+    components: [
+      new ActionRowBuilder<ButtonBuilder>().addComponents(checkout),
+    ],
+  };
+}
+
+export function buildTicketConfirmed(event: EventRecord): EventReplyOptions {
+  return {
+    content:
+      `✅ Your paid ticket for **${event.title}** is confirmed. ` +
+      "Stripe has emailed your receipt.",
     embeds: [],
     components: [],
   };
@@ -208,12 +250,20 @@ export function buildCancellationComplete(
 }
 
 function buildAnnouncementText(event: EventRecord): string {
-  return (
+  let text =
     `# ${event.title}\n\n` +
     `📅 **${event.schedule_text}**\n` +
     `📍 **${event.location}**\n\n` +
-    event.announcement
-  );
+    event.announcement;
+
+  if (event.ticket_price_cents && event.ticket_currency) {
+    text += `\n\n🎟️ **Tickets: ${formatTicketPrice(event)}**`;
+    if (event.ticket_limit !== null) {
+      text += ` · ${event.ticket_limit}-ticket capacity`;
+    }
+  }
+
+  return text;
 }
 
 function buildCompactRsvpText(
@@ -227,4 +277,19 @@ function buildCompactRsvpText(
     `📍 **${event.location}**\n\n` +
     message
   );
+}
+
+function formatTicketPrice(event: EventRecord): string {
+  if (!event.ticket_price_cents || !event.ticket_currency) {
+    throw new Error("This event does not have a ticket price.");
+  }
+
+  if (event.ticket_currency.toLowerCase() === "aud") {
+    return `A$${(event.ticket_price_cents / 100).toFixed(2)}`;
+  }
+
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: event.ticket_currency.toUpperCase(),
+  }).format(event.ticket_price_cents / 100);
 }

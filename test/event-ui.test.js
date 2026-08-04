@@ -7,6 +7,7 @@ import {
   buildEventPreview,
   buildPublicEventMessage,
   buildRsvpPrompt,
+  buildTicketCheckout,
 } from "../dist/event-ui.js";
 
 const event = {
@@ -54,7 +55,7 @@ test("serializes every event-creation modal field", () => {
   );
 });
 
-test("keeps the waiver private and the long announcement out of RSVP prompts", () => {
+test("keeps payment separate and the long announcement out of RSVP prompts", () => {
   const publicMessage = buildPublicEventMessage(event);
   const rsvpPrompt = buildRsvpPrompt(event);
 
@@ -63,8 +64,8 @@ test("keeps the waiver private and the long announcement out of RSVP prompts", (
   assert.doesNotMatch(publicMessage.content ?? "", /\$0|reduced to/);
 
   assert.deepEqual(rsvpPrompt.embeds ?? [], []);
-  assert.match(rsvpPrompt.content ?? "", /\$5/);
-  assert.match(rsvpPrompt.content ?? "", /~~\$5\.00~~ → \*\*\$FREE\*\*/);
+  assert.match(rsvpPrompt.content ?? "", /No payment is required/);
+  assert.doesNotMatch(rsvpPrompt.content ?? "", /\$5|\$FREE/);
   assert.doesNotMatch(
     rsvpPrompt.content ?? "",
     /Secret long-form details/,
@@ -105,6 +106,36 @@ test("uses a gray RSVP button and no announcement link buttons", () => {
     );
     assert.ok(buttons.every(({ style }) => style !== ButtonStyle.Link));
   }
+});
+
+test("adds paid ticket pricing and secure Checkout to paid events", () => {
+  const paidEvent = {
+    ...event,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 50,
+  };
+  const publicMessage = buildPublicEventMessage(paidEvent);
+  const buttons = publicMessage.components?.[0]?.components.map((button) =>
+    button.toJSON(),
+  );
+  const checkout = buildTicketCheckout(
+    paidEvent,
+    "https://checkout.stripe.com/c/pay/test",
+  );
+  const checkoutButton = checkout.components?.[0]?.components[0]?.toJSON();
+
+  assert.match(publicMessage.content ?? "", /Tickets: A\$12\.50/);
+  assert.match(publicMessage.content ?? "", /50-ticket capacity/);
+  assert.deepEqual(
+    buttons?.map(({ label }) => label),
+    ["RSVP", "Buy ticket — A$12.50"],
+  );
+  assert.equal(checkoutButton?.style, ButtonStyle.Link);
+  assert.equal(
+    checkoutButton?.url,
+    "https://checkout.stripe.com/c/pay/test",
+  );
 });
 
 test("uses plain message text throughout the event flow", () => {

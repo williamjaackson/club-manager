@@ -1,11 +1,13 @@
 # Club Manager
 
-A Discord-native event announcement and RSVP bot for Griffith ICT Club.
+A Discord-native event announcement, RSVP, and Stripe ticketing bot for
+Griffith ICT Club.
 
 Administrators create an event with `/event create`, review a private preview,
 and publish it to a selected channel. Members RSVP through a button on the
-announcement. RSVP data is stored in Neon PostgreSQL and mirrored to a private
-audit channel.
+announcement. Events can be RSVP-only or sell capacity-limited paid tickets
+through Stripe Checkout. RSVP and ticket data are stored in Neon PostgreSQL;
+RSVP changes are also mirrored to a private audit channel.
 
 ## Current event flow
 
@@ -14,12 +16,16 @@ audit channel.
 Run:
 
 ```text
-/event create artwork:<optional image>
+/event create artwork:<optional image> ticket_price:<optional AUD amount> ticket_limit:<optional capacity>
 ```
 
 The modal collects the announcement channel, event name, schedule, location,
 and complete announcement. The resulting preview is visible only to the
 administrator and must be explicitly published or discarded.
+
+Omit `ticket_price` for an RSVP-only event. When it is present, the event post
+shows the price and a **Buy ticket** button. `ticket_limit` is optional, but can
+only be used with a ticket price. Ticket prices currently use AUD.
 
 The command is hidden from non-administrators by its Discord command
 permissions. Every create, publish, and discard interaction also checks the
@@ -28,8 +34,20 @@ member's `Administrator` permission at runtime.
 ### Members
 
 The published announcement has an **RSVP** button. Selecting it opens a private
-summary containing only the event name, schedule, location, and current
-first-event pricing message. It does not repeat the full announcement.
+summary containing the schedule and location. It does not repeat the full
+announcement. RSVP is deliberately separate from paid admission.
+
+Paid events also have a **Buy ticket** button. It creates a private,
+approximately 30-minute reservation and links the member to Stripe-hosted
+Checkout. One Discord member can hold one paid ticket for an event. Selecting
+the button after purchase shows the existing ticket confirmation instead of
+charging again.
+
+Stripe's signed webhook is the source of truth for payment fulfillment. The
+success redirect never creates a ticket. Checkout creation and webhook
+fulfillment are both idempotent, and a short webhook grace period prevents an
+expiring reservation from reallocating capacity before a delayed webhook is
+processed.
 
 Confirmations and cancellations are idempotent: repeated button presses do not
 create duplicate history or audit messages.
@@ -60,6 +78,9 @@ DISCORD_TOKEN=replace-me
 DISCORD_GUILD_ID=replace-me
 RSVP_LOG_CHANNEL_ID=1530755171645132921
 DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+PUBLIC_BASE_URL=https://club.example.com
+STRIPE_SECRET_KEY=sk_test_replace-me
+STRIPE_WEBHOOK_SECRET=whsec_replace-me
 HEALTH_PORT=3000
 ```
 
@@ -80,6 +101,35 @@ publishing administrator's server display name and profile picture. The bot
 reuses its event webhook in each announcement channel and creates it on the
 first publish when needed.
 
+## Stripe setup
+
+Use test-mode keys until the complete purchase flow has been verified.
+
+1. Set `STRIPE_SECRET_KEY` to the secret key from the Stripe Dashboard.
+2. Proxy `/stripe/` from `PUBLIC_BASE_URL` to the bot's loopback listener at
+   `127.0.0.1:3001` through HTTPS.
+3. Add a Stripe webhook endpoint at
+   `https://your-public-host/stripe/webhook`.
+4. Subscribe it to `checkout.session.completed` and
+   `checkout.session.async_payment_succeeded`.
+5. Put that endpoint's `whsec_...` signing secret in
+   `STRIPE_WEBHOOK_SECRET`.
+
+For local webhook testing, run the bot and use the Stripe CLI:
+
+```sh
+stripe listen --forward-to localhost:3000/stripe/webhook
+```
+
+Use the signing secret printed by `stripe listen` and Stripe's test card
+`4242 4242 4242 4242`. The Checkout success and cancel pages are also served
+by the bot under `/stripe/`.
+
+Stripe Dashboard settings control the enabled payment methods. Tax treatment,
+refund policy, and automatic ticket revocation after a Dashboard refund still
+need to be configured for the club's operational requirements before live-mode
+sales.
+
 ## Run with Docker Compose
 
 ```sh
@@ -87,8 +137,8 @@ docker compose up --build -d
 docker compose logs -f bot
 ```
 
-Events and RSVP state are stored in Neon PostgreSQL and survive container
-replacement and VPS restarts.
+Events, RSVPs, and ticket state are stored in Neon PostgreSQL and survive
+container replacement and VPS restarts.
 
 Stop the bot with:
 
@@ -126,7 +176,6 @@ The Neon PostgreSQL database contains:
 - Immutable RSVP/cancellation history
 - Pending and delivered audit notifications
 - Open event-creation forms, with a 15-minute expiry
-
-Pricing is presentation-only in this version. Every member currently sees the
-$5 price reduced to $0 as their first-event offer; there is no eligibility or
-payment processing yet.
+- Ticket price and capacity on paid events
+- Pending Checkout reservations and fulfilled paid tickets
+- Stripe Checkout, PaymentIntent, customer, and receipt-reconciliation fields
