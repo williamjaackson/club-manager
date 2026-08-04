@@ -184,6 +184,13 @@ export class RsvpCapacityReachedError extends Error {
   }
 }
 
+export class EventAdmissionClosedError extends Error {
+  constructor() {
+    super("This event is closed and no longer accepting RSVPs or ticket sales.");
+    this.name = "EventAdmissionClosedError";
+  }
+}
+
 export class EventFinishedError extends Error {
   constructor() {
     super("This event has finished and is no longer accepting responses.");
@@ -488,6 +495,63 @@ export class Store {
       [guildId, messageId],
     );
     return result.rows[0] as EventRecord | undefined;
+  }
+
+  async getEventByAdmissionMessageId(
+    guildId: string,
+    messageId: string,
+  ): Promise<EventRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        SELECT events.*
+        FROM events
+        LEFT JOIN event_reminders
+          ON event_reminders.event_id = events.id
+        WHERE
+          events.guild_id = $1
+          AND (
+            events.message_id = $2
+            OR event_reminders.message_id = $2
+          )
+        LIMIT 1
+      `,
+      [guildId, messageId],
+    );
+    return result.rows[0] as EventRecord | undefined;
+  }
+
+  async getEventReminderMessageIds(eventId: number): Promise<string[]> {
+    const result = await this.#pool.query(
+      `
+        SELECT message_id
+        FROM event_reminders
+        WHERE event_id = $1
+        ORDER BY created_at, message_id
+      `,
+      [eventId],
+    );
+    return result.rows.map((row) => (row as { message_id: string }).message_id);
+  }
+
+  async closeEventAdmission(
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE events
+        SET ticket_sales_close_at = $1
+        WHERE
+          id = $2
+          AND status = 'published'
+          AND (
+            ticket_sales_close_at IS NULL
+            OR ticket_sales_close_at > $1
+          )
+      `,
+      [now, eventId],
+    );
+    return result.rowCount === 1;
   }
 
   async recordEventReminder(
@@ -1187,6 +1251,13 @@ export class Store {
         event.ends_at <= now
       ) {
         throw new EventFinishedError();
+      }
+      if (
+        status === "active" &&
+        event.ticket_sales_close_at !== null &&
+        event.ticket_sales_close_at <= now
+      ) {
+        throw new EventAdmissionClosedError();
       }
       if (status === "active" && event.ticket_price_cents !== null) {
         throw new EventUnavailableError();

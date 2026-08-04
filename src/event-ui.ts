@@ -209,7 +209,7 @@ export function buildEventPreview(
     content:
       `**Preview** — this will be posted in ` +
       `<#${event.announcement_channel_id}>.\n\n` +
-      buildAnnouncementText(event),
+      buildEventAnnouncementText(event),
     embeds: [],
     components: [
       new ActionRowBuilder<ButtonBuilder>().addComponents(publish, discard),
@@ -230,10 +230,16 @@ export function buildPublicEventMessage(
   }
 
   return {
-    content: buildAnnouncementText(event),
+    content: buildEventAnnouncementText(event),
     components: [buildAdmissionRow(event)],
     files,
   };
+}
+
+export function buildClosedAdmissionComponents(
+  event: EventRecord,
+): ActionRowBuilder<ButtonBuilder>[] {
+  return [buildAdmissionRow(event, true)];
 }
 
 export function buildReminderMessage(
@@ -372,7 +378,7 @@ export function buildCancellationComplete(
   };
 }
 
-function buildAnnouncementText(event: EventRecord): string {
+export function buildEventAnnouncementText(event: EventRecord): string {
   let text = event.test_mode
     ? "## 🧪 TEST EVENT — NO REAL MONEY WILL BE CHARGED\n\n"
     : "";
@@ -400,9 +406,10 @@ function buildAnnouncementText(event: EventRecord): string {
     if (typeof event.ticket_limit === "number") {
       text += `\n\n🎟️ **RSVP capacity:** ${event.ticket_limit} people`;
     }
-    if (typeof event.ends_at === "number") {
+    const rsvpClose = event.ticket_sales_close_at ?? event.ends_at;
+    if (typeof rsvpClose === "number") {
       text += `\n${typeof event.ticket_limit === "number" ? "" : "\n"}` +
-        `⏳ **RSVPs close:** <t:${event.ends_at}:F> (<t:${event.ends_at}:R>)`;
+        `⏳ **RSVPs close:** <t:${rsvpClose}:F> (<t:${rsvpClose}:R>)`;
     }
   }
 
@@ -433,11 +440,8 @@ function buildCompactRsvpText(
 
 function admissionClosed(event: EventRecord, now: number): boolean {
   if (typeof event.ends_at === "number" && event.ends_at <= now) return true;
-  return (
-    typeof event.ticket_price_cents === "number" &&
-    typeof event.ticket_sales_close_at === "number" &&
-    event.ticket_sales_close_at <= now
-  );
+  return typeof event.ticket_sales_close_at === "number" &&
+    event.ticket_sales_close_at <= now;
 }
 
 function formatTicketPrice(event: EventRecord): string {

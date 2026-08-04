@@ -10,6 +10,7 @@ import {
   type Attachment,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type MessageContextMenuCommandInteraction,
   type ModalSubmitInteraction,
   type NewsChannel,
   type TextChannel,
@@ -18,6 +19,7 @@ import {
 import type { AuditLogger } from "./audit.js";
 import { rsvpEligibility } from "./rsvp-eligibility.js";
 import {
+  EventAdmissionClosedError,
   EventFinishedError,
   EventUnavailableError,
   TicketSalesClosedError,
@@ -32,8 +34,10 @@ import {
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
+  buildClosedAdmissionComponents,
   buildCurrentRsvp,
   buildEventPreview,
+  buildEventAnnouncementText,
   buildEventWizardContinue,
   buildPublicEventMessage,
   buildReminderMessage,
@@ -103,6 +107,95 @@ export class EventController {
     await this.#store.createPendingEventCreate(pending);
     await interaction.showModal(buildCreateEventDetailsModal(token));
     return true;
+  }
+
+  async handleContextMenu(
+    interaction: MessageContextMenuCommandInteraction,
+  ): Promise<boolean> {
+    if (interaction.commandName !== "Close Event") return false;
+
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Events can only be closed inside a server.");
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const event = await this.#store.getEventByAdmissionMessageId(
+      interaction.guildId,
+      interaction.targetMessage.id,
+    );
+    if (!event || event.status !== "published" || !event.message_id) {
+      throw new Error("Use Close Event on an event announcement or reminder.");
+    }
+
+    const changed = await this.#store.closeEventAdmission(event.id);
+    const closedEvent = await this.#store.getEvent(event.id);
+    if (!closedEvent) throw new Error("That event no longer exists.");
+
+    const failedUpdates = await this.#refreshClosedAdmissionMessages(
+      interaction,
+      closedEvent,
+    ).catch((error) => {
+      console.error("Failed to refresh closed event messages", error);
+      return 1;
+    });
+    await interaction.editReply({
+      content:
+        (changed
+          ? `🔒 Closed **${event.title}**. No new RSVPs or ticket purchases will be accepted.`
+          : `**${event.title}** was already closed.`) +
+        (failedUpdates > 0
+          ? " Some old buttons could not be disabled visually, but they will still refuse admission."
+          : ""),
+      components: [],
+    });
+    return true;
+  }
+
+  async #refreshClosedAdmissionMessages(
+    interaction: MessageContextMenuCommandInteraction,
+    event: EventRecord,
+  ): Promise<number> {
+    const channel = await interaction.client.channels.fetch(
+      event.announcement_channel_id,
+    );
+    if (
+      channel?.type !== ChannelType.GuildText &&
+      channel?.type !== ChannelType.GuildAnnouncement
+    ) {
+      return 1;
+    }
+
+    const components = buildClosedAdmissionComponents(event);
+    const updates: Promise<unknown>[] = [];
+    if (event.message_id) {
+      updates.push(
+        this.#getOrCreateEventWebhook(channel, interaction.client.user.id)
+          .then((webhook) =>
+            webhook.editMessage(event.message_id!, {
+              content: buildEventAnnouncementText(event),
+              components,
+            }),
+          ),
+      );
+    }
+    const reminderIds = await this.#store.getEventReminderMessageIds(event.id);
+    for (const reminderId of reminderIds) {
+      updates.push(
+        channel.messages.fetch(reminderId).then((message) =>
+          message.edit({ components }),
+        ),
+      );
+    }
+
+    const results = await Promise.allSettled(updates);
+    let failureCount = 0;
+    for (const result of results) {
+      if (result.status !== "rejected") continue;
+      failureCount += 1;
+      console.error("Failed to disable a closed event button", result.reason);
+    }
+    return failureCount;
   }
 
   async handleModal(interaction: ModalSubmitInteraction): Promise<boolean> {
@@ -676,6 +769,7 @@ export class EventController {
   #requireAdministrator(
     interaction:
       | ChatInputCommandInteraction
+      | MessageContextMenuCommandInteraction
       | ModalSubmitInteraction
       | ButtonInteraction,
   ): void {
@@ -719,8 +813,15 @@ export class EventController {
   }
 
   #requireRsvpOpen(event: EventRecord): void {
-    if (typeof event.ends_at === "number" && event.ends_at <= currentTimestamp()) {
+    const now = currentTimestamp();
+    if (typeof event.ends_at === "number" && event.ends_at <= now) {
       throw new EventFinishedError();
+    }
+    if (
+      typeof event.ticket_sales_close_at === "number" &&
+      event.ticket_sales_close_at <= now
+    ) {
+      throw new EventAdmissionClosedError();
     }
   }
 

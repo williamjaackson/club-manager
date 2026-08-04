@@ -1,4 +1,6 @@
 import {
+  ApplicationCommandType,
+  ContextMenuCommandBuilder,
   PermissionFlagsBits,
   SlashCommandBuilder,
 } from "discord.js";
@@ -17,6 +19,11 @@ export const commandDefinitions = [
         .setName("create")
         .setDescription("Create a new event announcement"),
     )
+    .toJSON(),
+  new ContextMenuCommandBuilder()
+    .setName("Close Event")
+    .setType(ApplicationCommandType.Message)
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .toJSON(),
   new SlashCommandBuilder()
     .setName("reminder")
