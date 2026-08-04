@@ -68,6 +68,10 @@ export interface PendingEventCreateRecord {
   token: string;
   user_id: string;
   guild_id: string;
+  announcement_channel_id: string | null;
+  title: string | null;
+  location: string | null;
+  announcement: string | null;
   artwork_url: string | null;
   artwork_name: string | null;
   ticket_price_cents: number | null;
@@ -85,6 +89,10 @@ export interface NewPendingEventCreate {
   token: string;
   userId: string;
   guildId: string;
+  announcementChannelId?: string;
+  title?: string;
+  location?: string;
+  announcement?: string;
   artworkUrl?: string;
   artworkName?: string;
   ticketPriceCents?: number;
@@ -92,6 +100,21 @@ export interface NewPendingEventCreate {
   ticketLimit?: number;
   testMode?: boolean;
   startsAt?: number;
+  endsAt?: number;
+  ticketSalesCloseAt?: number;
+}
+
+export interface PendingEventDetails {
+  announcementChannelId: string;
+  title: string;
+  location: string;
+  announcement: string;
+  artworkUrl?: string;
+  artworkName?: string;
+}
+
+export interface PendingEventSchedule {
+  startsAt: number;
   endsAt?: number;
   ticketSalesCloseAt?: number;
 }
@@ -151,6 +174,13 @@ export class TicketSoldOutError extends Error {
   constructor() {
     super("Tickets for this event are sold out.");
     this.name = "TicketSoldOutError";
+  }
+}
+
+export class RsvpCapacityReachedError extends Error {
+  constructor() {
+    super("This event has reached its RSVP capacity.");
+    this.name = "RsvpCapacityReachedError";
   }
 }
 
@@ -231,6 +261,10 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         token TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
         guild_id TEXT NOT NULL,
+        announcement_channel_id TEXT,
+        title TEXT,
+        location TEXT,
+        announcement TEXT,
         artwork_url TEXT,
         artwork_name TEXT,
         ticket_price_cents INTEGER,
@@ -244,6 +278,11 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         expires_at DOUBLE PRECISION NOT NULL
       );
 
+      ALTER TABLE pending_event_creates
+        ADD COLUMN IF NOT EXISTS announcement_channel_id TEXT;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS title TEXT;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS location TEXT;
+      ALTER TABLE pending_event_creates ADD COLUMN IF NOT EXISTS announcement TEXT;
       ALTER TABLE pending_event_creates
         ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
       ALTER TABLE pending_event_creates
@@ -558,6 +597,10 @@ export class Store {
           token,
           user_id,
           guild_id,
+          announcement_channel_id,
+          title,
+          location,
+          announcement,
           artwork_url,
           artwork_name,
           ticket_price_cents,
@@ -570,14 +613,18 @@ export class Store {
           created_at,
           expires_at
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11, $12, $13, $14
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15, $16, $17, $18
         )
       `,
       [
         pending.token,
         pending.userId,
         pending.guildId,
+        pending.announcementChannelId ?? null,
+        pending.title ?? null,
+        pending.location ?? null,
+        pending.announcement ?? null,
         pending.artworkUrl ?? null,
         pending.artworkName ?? null,
         pending.ticketPriceCents ?? null,
@@ -591,6 +638,75 @@ export class Store {
         now + lifetimeSeconds,
       ],
     );
+  }
+
+  async updatePendingEventDetails(
+    token: string,
+    userId: string,
+    guildId: string | null,
+    details: PendingEventDetails,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE pending_event_creates
+        SET
+          announcement_channel_id = $1,
+          title = $2,
+          location = $3,
+          announcement = $4,
+          artwork_url = $5,
+          artwork_name = $6
+        WHERE
+          token = $7
+          AND user_id = $8
+          AND guild_id = $9
+          AND expires_at > $10
+      `,
+      [
+        details.announcementChannelId,
+        details.title,
+        details.location,
+        details.announcement,
+        details.artworkUrl ?? null,
+        details.artworkName ?? null,
+        token,
+        userId,
+        guildId,
+        now,
+      ],
+    );
+    return result.rowCount === 1;
+  }
+
+  async updatePendingEventSchedule(
+    token: string,
+    userId: string,
+    guildId: string | null,
+    schedule: PendingEventSchedule,
+    now = currentTimestamp(),
+  ): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        UPDATE pending_event_creates
+        SET starts_at = $1, ends_at = $2, ticket_sales_close_at = $3
+        WHERE
+          token = $4
+          AND user_id = $5
+          AND guild_id = $6
+          AND expires_at > $7
+      `,
+      [
+        schedule.startsAt,
+        schedule.endsAt ?? null,
+        schedule.ticketSalesCloseAt ?? null,
+        token,
+        userId,
+        guildId,
+        now,
+      ],
+    );
+    return result.rowCount === 1;
   }
 
   async getPendingEventCreate(
@@ -1088,6 +1204,23 @@ export class Store {
       ) {
         await client.query("COMMIT");
         return { changed: false, status };
+      }
+
+      if (status === "active" && event.ticket_limit !== null) {
+        const capacityResult = await client.query(
+          `
+            SELECT COUNT(*)::integer AS count
+            FROM rsvps
+            WHERE event_id = $1 AND status = 'active'
+          `,
+          [eventId],
+        );
+        const activeCount = Number(
+          (capacityResult.rows[0] as { count: number }).count,
+        );
+        if (activeCount >= event.ticket_limit) {
+          throw new RsvpCapacityReachedError();
+        }
       }
 
       await client.query(

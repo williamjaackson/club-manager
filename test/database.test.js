@@ -4,6 +4,7 @@ import { newDb } from "pg-mem";
 import {
   EventFinishedError,
   EventUnavailableError,
+  RsvpCapacityReachedError,
   setupDatabase,
   Store,
   TicketSoldOutError,
@@ -451,6 +452,47 @@ test("records only real RSVP state changes and queues their audit trail", async 
   }
 });
 
+test("enforces capacity for free RSVPs and releases it on cancellation", async () => {
+  const context = await fixture({ ticketLimit: 1 });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+    await context.store.confirmRsvp(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+    await assert.rejects(
+      context.store.confirmRsvp(
+        context.event.id,
+        "62345678901234567",
+        301,
+      ),
+      RsvpCapacityReachedError,
+    );
+    await context.store.cancelRsvp(
+      context.event.id,
+      "52345678901234567",
+      302,
+    );
+    assert.equal(
+      (await context.store.confirmRsvp(
+        context.event.id,
+        "62345678901234567",
+        303,
+      )).changed,
+      true,
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("rejects RSVPs before an event is published", async () => {
   const context = await fixture();
 
@@ -522,6 +564,33 @@ test("keeps open event forms across database pool restarts", async () => {
       100,
       900,
     );
+    assert.equal(
+      await store.updatePendingEventDetails(
+        "persistent-form",
+        "12345678901234567",
+        "22345678901234567",
+        {
+          announcementChannelId: "32345678901234567",
+          title: "Persistent event",
+          location: "Gold Coast",
+          announcement: "Complete announcement.",
+          artworkUrl: "https://cdn.discordapp.com/new-artwork.png",
+          artworkName: "new-artwork.png",
+        },
+        150,
+      ),
+      true,
+    );
+    assert.equal(
+      await store.updatePendingEventSchedule(
+        "persistent-form",
+        "12345678901234567",
+        "22345678901234567",
+        { startsAt: 2_000 },
+        150,
+      ),
+      true,
+    );
     await store.close();
 
     pool = new adapter.Pool();
@@ -533,7 +602,11 @@ test("keeps open event forms across database pool restarts", async () => {
 
     assert.equal(pending?.user_id, "12345678901234567");
     assert.equal(pending?.guild_id, "22345678901234567");
-    assert.equal(pending?.artwork_name, "artwork.png");
+    assert.equal(pending?.announcement_channel_id, "32345678901234567");
+    assert.equal(pending?.title, "Persistent event");
+    assert.equal(pending?.artwork_name, "new-artwork.png");
+    assert.equal(pending?.starts_at, 2_000);
+    assert.equal(pending?.ends_at, null);
     assert.equal(pending?.ticket_price_cents, 1250);
     assert.equal(pending?.ticket_currency, "aud");
     assert.equal(pending?.ticket_limit, 50);
@@ -557,7 +630,7 @@ test("keeps open event forms across database pool restarts", async () => {
       "22345678901234567",
       200,
     );
-    assert.equal(consumed?.artwork_name, "artwork.png");
+    assert.equal(consumed?.artwork_name, "new-artwork.png");
     assert.equal(
       await store.getPendingEventCreate("persistent-form", 200),
       undefined,

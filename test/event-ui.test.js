@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ButtonStyle } from "discord.js";
 import {
-  buildCreateEventModal,
+  buildCreateEventAdmissionModal,
+  buildCreateEventDetailsModal,
+  buildCreateEventScheduleModal,
   buildCurrentRsvp,
   buildEventPreview,
   buildPublicEventMessage,
@@ -29,11 +31,14 @@ const event = {
   published_at: 200,
 };
 
-test("serializes every event-creation modal field", () => {
-  const modal = buildCreateEventModal("regression-test").toJSON();
+test("serializes every step of the event-creation wizard", () => {
+  const token = "a".repeat(32);
+  const modal = buildCreateEventDetailsModal(token).toJSON();
+  const schedule = buildCreateEventScheduleModal(token).toJSON();
+  const admission = buildCreateEventAdmissionModal(token).toJSON();
 
-  assert.equal(modal.custom_id, "event:create:regression-test");
-  assert.equal(modal.components.length, 4);
+  assert.equal(modal.custom_id, `event:create:details:${token}`);
+  assert.equal(modal.components.length, 5);
   assert.deepEqual(
     modal.components.map(({ label }) => label),
     [
@@ -41,6 +46,7 @@ test("serializes every event-creation modal field", () => {
       "Event name",
       "Location",
       "Announcement",
+      "Artwork (optional)",
     ],
   );
   assert.deepEqual(
@@ -50,7 +56,16 @@ test("serializes every event-creation modal field", () => {
       "event-title",
       "event-location",
       "event-announcement",
+      "event-artwork",
     ],
+  );
+  assert.deepEqual(
+    schedule.components.map(({ component }) => component.custom_id),
+    ["event-starts-at", "event-ends-at", "event-ticket-sales-close-at"],
+  );
+  assert.deepEqual(
+    admission.components.map(({ component }) => component.custom_id),
+    ["event-ticket-price", "event-capacity", "event-test-mode"],
   );
 });
 
@@ -174,8 +189,17 @@ test("shows structured event and ticket closing times", () => {
     ...event,
     ticket_price_cents: null,
     ticket_currency: null,
+    ticket_limit: 25,
     starts_at: 2_000,
     ends_at: 3_000,
+  });
+  const openEndedMessage = buildPublicEventMessage({
+    ...event,
+    ticket_price_cents: null,
+    ticket_currency: null,
+    ticket_limit: null,
+    starts_at: 2_000,
+    ends_at: null,
   });
   const reminder = buildReminderMessage(
     timedEvent,
@@ -187,7 +211,9 @@ test("shows structured event and ticket closing times", () => {
   assert.match(publicMessage.content ?? "", /<t:2000:F>/);
   assert.match(publicMessage.content ?? "", /<t:3000:F>/);
   assert.match(publicMessage.content ?? "", /Ticket sales close.*<t:2500:F>/s);
+  assert.match(freeMessage.content ?? "", /RSVP capacity.*25 people/s);
   assert.match(freeMessage.content ?? "", /RSVPs close.*<t:3000:F>/s);
+  assert.doesNotMatch(openEndedMessage.content ?? "", /Finishes|RSVPs close/);
   assert.equal(reminder.content, "@everyone Reminder");
   assert.deepEqual(reminder.allowedMentions?.parse, [
     "everyone",

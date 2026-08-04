@@ -3,201 +3,171 @@ import test from "node:test";
 import { ChannelType, MessageFlags } from "discord.js";
 import { EventController } from "../dist/event-controller.js";
 
-test("acknowledges a modal before preparing its artwork preview", async () => {
+test("creates a paid multi-day test event through the persistent wizard", async () => {
+  const guildId = "12345678901234567";
+  const channelId = "22345678901234567";
+  const userId = "32345678901234567";
+  const administrator = { has() { return true; } };
+  let pending;
+  let createdDraft;
   let modal;
-  let deferred = false;
-  let preview;
-  let finishPendingSave;
-
-  const event = {
-    id: 42,
-    guild_id: "12345678901234567",
-    announcement_channel_id: "22345678901234567",
-    message_id: null,
-    creator_id: "32345678901234567",
-    title: "Test event",
-    schedule_text: "Saturday, 10:00 am–5:00 pm",
-    location: "Gold Coast",
-    announcement: "A complete announcement.",
-    artwork_url: "https://cdn.discordapp.com/attachments/example/artwork.png",
-    artwork_name: "artwork.png",
-    status: "draft",
-    created_at: 100,
-    published_at: null,
-  };
-  let pendingCreate;
+  let response;
   const store = {
-    createPendingEventCreate(pending) {
-      pendingCreate = {
-        token: pending.token,
-        user_id: pending.userId,
-        guild_id: pending.guildId,
-        artwork_url: pending.artworkUrl ?? null,
-        artwork_name: pending.artworkName ?? null,
-        starts_at: pending.startsAt ?? null,
-        ends_at: pending.endsAt ?? null,
-        ticket_sales_close_at: pending.ticketSalesCloseAt ?? null,
+    async createPendingEventCreate(value) {
+      pending = {
+        token: value.token,
+        user_id: value.userId,
+        guild_id: value.guildId,
+        announcement_channel_id: null,
+        title: null,
+        location: null,
+        announcement: null,
+        artwork_url: null,
+        artwork_name: null,
+        starts_at: null,
+        ends_at: null,
+        ticket_sales_close_at: null,
       };
-      return new Promise((resolve) => {
-        finishPendingSave = resolve;
+    },
+    async getPendingEventCreate() { return pending; },
+    async updatePendingEventDetails(token, owner, guild, details) {
+      assert.deepEqual([token, owner, guild], [pending.token, userId, guildId]);
+      Object.assign(pending, {
+        announcement_channel_id: details.announcementChannelId,
+        title: details.title,
+        location: details.location,
+        announcement: details.announcement,
+        artwork_url: details.artworkUrl ?? null,
+        artwork_name: details.artworkName ?? null,
       });
+      return true;
     },
-    consumePendingEventCreate(token, userId, guildId) {
-      assert.equal(deferred, true);
-      if (
-        pendingCreate?.token !== token ||
-        pendingCreate.user_id !== userId ||
-        pendingCreate.guild_id !== guildId
-      ) {
-        return undefined;
-      }
-
-      const consumed = pendingCreate;
-      pendingCreate = undefined;
-      return consumed;
+    async updatePendingEventSchedule(token, owner, guild, schedule) {
+      assert.deepEqual([token, owner, guild], [pending.token, userId, guildId]);
+      Object.assign(pending, {
+        starts_at: schedule.startsAt,
+        ends_at: schedule.endsAt ?? null,
+        ticket_sales_close_at: schedule.ticketSalesCloseAt ?? null,
+      });
+      return true;
     },
-    createEventDraft(draft) {
-      assert.equal(deferred, true);
-      return { ...event, ...draft };
+    async consumePendingEventCreate() {
+      const value = pending;
+      pending = undefined;
+      return value;
+    },
+    async createEventDraft(draft) {
+      createdDraft = draft;
+      return {
+        id: 42,
+        guild_id: draft.guildId,
+        announcement_channel_id: draft.announcementChannelId,
+        message_id: null,
+        creator_id: draft.creatorId,
+        title: draft.title,
+        schedule_text: draft.scheduleText,
+        location: draft.location,
+        announcement: draft.announcement,
+        artwork_url: draft.artworkUrl ?? null,
+        artwork_name: draft.artworkName ?? null,
+        ticket_price_cents: draft.ticketPriceCents ?? null,
+        ticket_currency: draft.ticketCurrency ?? null,
+        ticket_limit: draft.ticketLimit ?? null,
+        test_mode: draft.testMode ?? false,
+        starts_at: draft.startsAt ?? null,
+        ends_at: draft.endsAt ?? null,
+        ticket_sales_close_at: draft.ticketSalesCloseAt ?? null,
+        status: "draft",
+        created_at: 100,
+        published_at: null,
+      };
     },
   };
   const controller = new EventController(store, {});
-  const administrator = {
-    has() {
-      return true;
-    },
+  const baseInteraction = {
+    guildId,
+    user: { id: userId },
+    memberPermissions: administrator,
+    inGuild() { return true; },
   };
 
   await controller.handleCommand({
+    ...baseInteraction,
     commandName: "event",
-    guildId: event.guild_id,
-    user: { id: event.creator_id },
-    memberPermissions: administrator,
-    inGuild() {
-      return true;
-    },
-    options: {
-      getSubcommand() {
-        return "create";
-      },
-      getAttachment() {
-        return {
-          contentType: "image/png",
-          name: event.artwork_name,
-          url: event.artwork_url,
-        };
-      },
-      getNumber() {
-        return null;
-      },
-      getInteger() {
-        return null;
-      },
-      getBoolean() {
-        return null;
-      },
-      getString(name) {
-        if (name === "start_time") return "2099-08-08 10:00";
-        if (name === "finish_time") return "2099-08-08 17:00";
-        return null;
-      },
-    },
-    async showModal(value) {
-      modal = value.toJSON();
-      finishPendingSave();
-    },
+    options: { getSubcommand() { return "create"; } },
+    async showModal(value) { modal = value.toJSON(); },
   });
+  assert.match(modal.custom_id, /^event:create:details:/);
 
-  const values = {
-    "event-title": event.title,
-    "event-location": event.location,
-    "event-announcement": event.announcement,
+  const artwork = {
+    contentType: "image/png",
+    name: "artwork.png",
+    url: "https://cdn.discordapp.com/ephemeral/artwork.png",
   };
-
+  const details = {
+    "event-title": "Test event",
+    "event-location": "Gold Coast",
+    "event-announcement": "A complete announcement.",
+  };
   await controller.handleModal({
+    ...baseInteraction,
     customId: modal.custom_id,
-    guildId: event.guild_id,
-    user: { id: event.creator_id },
-    memberPermissions: administrator,
-    inGuild() {
-      return true;
-    },
     fields: {
       getSelectedChannels() {
-        return {
-          first() {
-            return {
-              id: event.announcement_channel_id,
-              isSendable() {
-                return true;
-              },
-            };
-          },
-        };
+        return { first() { return { id: channelId, isSendable() { return true; } }; } };
       },
-      getTextInputValue(customId) {
-        return values[customId];
-      },
+      getUploadedFiles() { return { first() { return artwork; } }; },
+      getTextInputValue(id) { return details[id]; },
     },
-    async deferReply(options) {
-      assert.equal(options.flags, MessageFlags.Ephemeral);
-      deferred = true;
-    },
-    async editReply(options) {
-      preview = options;
-    },
-    async reply() {
-      assert.fail("valid modal submissions should be deferred, not replied to");
-    },
+    async deferReply(options) { assert.equal(options.flags, MessageFlags.Ephemeral); },
+    async editReply(options) { response = options; },
   });
 
-  assert.equal(deferred, true);
-  assert.equal(pendingCreate, undefined);
-  assert.equal(preview.files.length, 1);
-  assert.equal(preview.files[0].name, event.artwork_name);
-});
-
-test("records the test-event flag with paid event creation", async () => {
-  let pending;
-  const controller = new EventController({
-    async createPendingEventCreate(value) {
-      pending = value;
-    },
-  }, {});
-
-  await controller.handleCommand({
-    commandName: "event",
-    guildId: "12345678901234567",
-    user: { id: "32345678901234567" },
-    memberPermissions: { has() { return true; } },
-    inGuild() { return true; },
-    options: {
-      getSubcommand() { return "create"; },
-      getAttachment() { return null; },
-      getNumber() { return 12.5; },
-      getInteger() { return 50; },
-      getBoolean() { return true; },
-      getString(name) {
-        if (name === "start_time") return "2099-08-08 10:00";
-        if (name === "finish_time") return "2099-08-08 17:00";
-        if (name === "ticket_close_time") return "2099-08-07 17:00";
-        return null;
-      },
-    },
-    async showModal() {},
+  const scheduleButton = response.components[0].components[0].toJSON().custom_id;
+  await controller.handleButton({
+    ...baseInteraction,
+    customId: scheduleButton,
+    async showModal(value) { modal = value.toJSON(); },
+  });
+  const schedule = {
+    "event-starts-at": "2099-08-08 10:00",
+    "event-ends-at": "2099-08-10 17:00",
+    "event-ticket-sales-close-at": "2099-08-07 17:00",
+  };
+  await controller.handleModal({
+    ...baseInteraction,
+    customId: modal.custom_id,
+    fields: { getTextInputValue(id) { return schedule[id]; } },
+    async deferReply() {},
+    async editReply(options) { response = options; },
   });
 
-  assert.equal(pending.ticketPriceCents, 1250);
-  assert.equal(pending.ticketLimit, 50);
-  assert.equal(pending.testMode, true);
-  assert.equal(
-    pending.startsAt,
-    Math.floor(Date.parse("2099-08-08T10:00:00+10:00") / 1000),
-  );
-  assert.equal(
-    pending.ticketSalesCloseAt,
-    Math.floor(Date.parse("2099-08-07T17:00:00+10:00") / 1000),
-  );
+  const admissionButton = response.components[0].components[0].toJSON().custom_id;
+  await controller.handleButton({
+    ...baseInteraction,
+    customId: admissionButton,
+    async showModal(value) { modal = value.toJSON(); },
+  });
+  await controller.handleModal({
+    ...baseInteraction,
+    customId: modal.custom_id,
+    fields: {
+      getTextInputValue(id) {
+        return id === "event-ticket-price" ? "12.50" : "50";
+      },
+      getCheckbox() { return true; },
+    },
+    async deferReply() {},
+    async editReply(options) { response = options; },
+  });
+
+  assert.equal(pending, undefined);
+  assert.equal(createdDraft.ticketPriceCents, 1250);
+  assert.equal(createdDraft.ticketLimit, 50);
+  assert.equal(createdDraft.testMode, true);
+  assert.ok(createdDraft.endsAt > createdDraft.startsAt);
+  assert.match(createdDraft.scheduleText, /8 August 2099.*10 August 2099/);
+  assert.equal(response.files[0].name, artwork.name);
 });
 
 test("replies to an event announcement with a reusable admission button", async () => {
