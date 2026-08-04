@@ -8,8 +8,8 @@ test("serves health and forwards an untouched signed Stripe webhook body", async
   const server = createHttpServer(
     { isReady: () => true },
     {
-      async handleWebhook(body, signature) {
-        received = { body, signature };
+      async handleWebhook(body, signature, mode) {
+        received = { body, signature, mode };
       },
     },
   );
@@ -33,7 +33,18 @@ test("serves health and forwards an untouched signed Stripe webhook body", async
     );
     assert.equal(webhookResponse.status, 200);
     assert.equal(received.signature, "test-signature");
+    assert.equal(received.mode, "primary");
     assert.deepEqual(received.body, payload);
+
+    const testWebhookResponse = responseFixture();
+    await handler(
+      requestFixture("/stripe/test-webhook", payload, {
+        "stripe-signature": "test-signature",
+      }),
+      testWebhookResponse,
+    );
+    assert.equal(testWebhookResponse.status, 200);
+    assert.equal(received.mode, "test");
 
     const unsignedResponse = responseFixture();
     await handler(

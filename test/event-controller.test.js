@@ -90,6 +90,9 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
       getInteger() {
         return null;
       },
+      getBoolean() {
+        return null;
+      },
     },
     async showModal(value) {
       modal = value.toJSON();
@@ -145,6 +148,35 @@ test("acknowledges a modal before preparing its artwork preview", async () => {
   assert.equal(pendingCreate, undefined);
   assert.equal(preview.files.length, 1);
   assert.equal(preview.files[0].name, event.artwork_name);
+});
+
+test("records the test-event flag with paid event creation", async () => {
+  let pending;
+  const controller = new EventController({
+    async createPendingEventCreate(value) {
+      pending = value;
+    },
+  }, {});
+
+  await controller.handleCommand({
+    commandName: "event",
+    guildId: "12345678901234567",
+    user: { id: "32345678901234567" },
+    memberPermissions: { has() { return true; } },
+    inGuild() { return true; },
+    options: {
+      getSubcommand() { return "create"; },
+      getAttachment() { return null; },
+      getNumber() { return 12.5; },
+      getInteger() { return 50; },
+      getBoolean() { return true; },
+    },
+    async showModal() {},
+  });
+
+  assert.equal(pending.ticketPriceCents, 1250);
+  assert.equal(pending.ticketLimit, 50);
+  assert.equal(pending.testMode, true);
 });
 
 test("requires a connected or exempt role before showing the RSVP confirmation", async () => {

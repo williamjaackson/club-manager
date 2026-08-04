@@ -20,28 +20,39 @@ export class InvalidStripeWebhookError extends Error {
   }
 }
 
+type StripeWebhookMode = "primary" | "test";
+
+interface StripeTestMode {
+  stripe: Stripe;
+  webhookSecret: string;
+}
+
 export class TicketingService {
   readonly #stripe: Stripe;
   readonly #store: Store;
   readonly #publicBaseUrl: string;
   readonly #webhookSecret: string;
+  readonly #testMode: StripeTestMode | undefined;
 
   constructor(
     stripe: Stripe,
     store: Store,
     publicBaseUrl: string,
     webhookSecret: string,
+    testMode?: StripeTestMode,
   ) {
     this.#stripe = stripe;
     this.#store = store;
     this.#publicBaseUrl = publicBaseUrl;
     this.#webhookSecret = webhookSecret;
+    this.#testMode = testMode;
   }
 
   async startCheckout(
     event: EventRecord,
     userId: string,
   ): Promise<TicketCheckoutResult> {
+    const stripe = this.#stripeForEvent(event);
     const reservation = await this.#store.reserveTicketCheckout(
       event.id,
       userId,
@@ -77,8 +88,9 @@ export class TicketingService {
       ticket_order_id: String(order.id),
       event_id: String(event.id),
       discord_user_id: userId,
+      test_event: String(event.test_mode === true),
     };
-    const session = await this.#stripe.checkout.sessions.create(
+    const session = await stripe.checkout.sessions.create(
       {
         mode: "payment",
         client_reference_id: `${event.id}:${userId}`,
@@ -127,14 +139,19 @@ export class TicketingService {
     };
   }
 
-  async handleWebhook(payload: Buffer, signature: string): Promise<void> {
+  async handleWebhook(
+    payload: Buffer,
+    signature: string,
+    mode: StripeWebhookMode = "primary",
+  ): Promise<void> {
     let event: Stripe.Event;
+    const webhook = this.#webhookForMode(mode);
 
     try {
-      event = this.#stripe.webhooks.constructEvent(
+      event = webhook.stripe.webhooks.constructEvent(
         payload,
         signature,
-        this.#webhookSecret,
+        webhook.secret,
       );
     } catch (error) {
       throw new InvalidStripeWebhookError(
@@ -143,8 +160,8 @@ export class TicketingService {
     }
 
     if (event.type === "charge.refunded") {
-      const charge = await this.#stripe.charges.retrieve(event.data.object.id);
-      await this.#revokeFullyRefundedCharge(charge);
+      const charge = await webhook.stripe.charges.retrieve(event.data.object.id);
+      await this.#revokeFullyRefundedCharge(charge, mode === "test");
       return;
     }
 
@@ -155,14 +172,14 @@ export class TicketingService {
       return;
     }
 
-    const checkout = await this.#stripe.checkout.sessions.retrieve(
+    const checkout = await webhook.stripe.checkout.sessions.retrieve(
       event.data.object.id,
       { expand: ["line_items"] },
     );
 
     if (checkout.payment_status !== "paid") return;
 
-    await this.#fulfillCheckout(checkout);
+    await this.#fulfillCheckout(checkout, mode === "test");
   }
 
   async checkoutStatus(
@@ -174,7 +191,10 @@ export class TicketingService {
     return order?.status ?? "unknown";
   }
 
-  async #revokeFullyRefundedCharge(charge: Stripe.Charge): Promise<void> {
+  async #revokeFullyRefundedCharge(
+    charge: Stripe.Charge,
+    testMode: boolean,
+  ): Promise<void> {
     if (!charge.refunded || charge.amount_refunded < charge.amount) return;
 
     const paymentIntentId =
@@ -188,6 +208,7 @@ export class TicketingService {
     );
     const details: Parameters<Store["refundTicketOrderByPaymentIntent"]>[1] = {
       chargeId: charge.id,
+      testMode,
     };
     if (successfulRefund) details.refundId = successfulRefund.id;
 
@@ -197,7 +218,10 @@ export class TicketingService {
     );
   }
 
-  async #fulfillCheckout(checkout: Stripe.Checkout.Session): Promise<void> {
+  async #fulfillCheckout(
+    checkout: Stripe.Checkout.Session,
+    testMode: boolean,
+  ): Promise<void> {
     if (
       checkout.mode !== "payment" ||
       checkout.line_items?.data.length !== 1 ||
@@ -225,6 +249,10 @@ export class TicketingService {
 
     if (order.event_id !== event.id || order.user_id !== userId) {
       throw new Error("Checkout Session ticket metadata does not match the order.");
+    }
+
+    if ((event.test_mode === true) !== testMode || (testMode && checkout.livemode)) {
+      throw new Error("Checkout Session mode does not match the ticket event.");
     }
 
     if (
@@ -258,6 +286,32 @@ export class TicketingService {
       checkout.id,
       details,
     );
+  }
+
+  #stripeForEvent(event: EventRecord): Stripe {
+    if (!event.test_mode) return this.#stripe;
+    if (!this.#testMode) {
+      throw new Error(
+        "Stripe test mode requires STRIPE_TEST_SECRET_KEY and STRIPE_TEST_WEBHOOK_SECRET.",
+      );
+    }
+    return this.#testMode.stripe;
+  }
+
+  #webhookForMode(mode: StripeWebhookMode): {
+    stripe: Stripe;
+    secret: string;
+  } {
+    if (mode === "primary") {
+      return { stripe: this.#stripe, secret: this.#webhookSecret };
+    }
+    if (!this.#testMode) {
+      throw new InvalidStripeWebhookError("Stripe test mode is not configured.");
+    }
+    return {
+      stripe: this.#testMode.stripe,
+      secret: this.#testMode.webhookSecret,
+    };
   }
 }
 

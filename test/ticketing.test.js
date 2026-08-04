@@ -20,6 +20,7 @@ const event = {
   ticket_price_cents: 1250,
   ticket_currency: "aud",
   ticket_limit: 50,
+  test_mode: false,
   status: "published",
   created_at: 100,
   published_at: 200,
@@ -104,6 +105,7 @@ test("creates an idempotent Stripe Checkout Session for a ticket reservation", a
     ticket_order_id: "7",
     event_id: "42",
     discord_user_id: pendingOrder.user_id,
+    test_event: "false",
   });
   assert.equal(
     createParameters.success_url,
@@ -112,6 +114,133 @@ test("creates an idempotent Stripe Checkout Session for a ticket reservation", a
   assert.equal(
     requestOptions.idempotencyKey,
     "ticket-order-7-attempt-1",
+  );
+});
+
+test("routes test events and webhooks through Stripe sandbox mode", async () => {
+  const testEvent = { ...event, test_mode: true };
+  let createdWithTestStripe = false;
+  let fulfillment;
+  const checkout = {
+    id: "cs_test_sandbox_ticket",
+    url: "https://checkout.stripe.com/test",
+    mode: "payment",
+    livemode: false,
+    payment_status: "paid",
+    amount_total: 1250,
+    currency: "aud",
+    payment_intent: "pi_test_sandbox_ticket",
+    line_items: { data: [{ quantity: 1 }] },
+    metadata: {
+      ticket_order_id: "7",
+      event_id: "42",
+      discord_user_id: pendingOrder.user_id,
+      test_event: "true",
+    },
+    customer_details: null,
+  };
+  const store = {
+    async reserveTicketCheckout() {
+      return { alreadyPaid: false, order: pendingOrder };
+    },
+    async attachTicketCheckout() {
+      return {
+        ...pendingOrder,
+        checkout_session_id: checkout.id,
+        checkout_url: checkout.url,
+      };
+    },
+    async getTicketOrder() {
+      return pendingOrder;
+    },
+    async getEvent() {
+      return testEvent;
+    },
+    async fulfillTicketOrder(orderId, sessionId, details) {
+      fulfillment = { orderId, sessionId, details };
+      return true;
+    },
+  };
+  const primaryStripe = {
+    checkout: {
+      sessions: {
+        async create() {
+          assert.fail("test events must not use primary Stripe");
+        },
+      },
+    },
+  };
+  const testStripe = {
+    webhooks: {
+      constructEvent(payload, signature, secret) {
+        assert.equal(payload.toString(), "signed sandbox event");
+        assert.equal(signature, "test-signature");
+        assert.equal(secret, "whsec_sandbox");
+        return {
+          type: "checkout.session.completed",
+          data: { object: { id: checkout.id } },
+        };
+      },
+    },
+    checkout: {
+      sessions: {
+        async create(parameters) {
+          createdWithTestStripe = true;
+          assert.equal(parameters.metadata.test_event, "true");
+          return checkout;
+        },
+        async retrieve(id) {
+          assert.equal(id, checkout.id);
+          return checkout;
+        },
+      },
+    },
+  };
+  const service = new TicketingService(
+    primaryStripe,
+    store,
+    "https://club.example",
+    "whsec_primary",
+    { stripe: testStripe, webhookSecret: "whsec_sandbox" },
+  );
+
+  await service.startCheckout(testEvent, pendingOrder.user_id);
+  await service.handleWebhook(
+    Buffer.from("signed sandbox event"),
+    "test-signature",
+    "test",
+  );
+
+  assert.equal(createdWithTestStripe, true);
+  assert.deepEqual(fulfillment, {
+    orderId: pendingOrder.id,
+    sessionId: checkout.id,
+    details: {
+      paymentIntentId: "pi_test_sandbox_ticket",
+      amountTotal: 1250,
+      currency: "aud",
+    },
+  });
+});
+
+test("does not reserve test-event capacity without complete sandbox credentials", async () => {
+  const service = new TicketingService(
+    {},
+    {
+      async reserveTicketCheckout() {
+        assert.fail("configuration must be checked before reserving capacity");
+      },
+    },
+    "https://club.example",
+    "whsec_primary",
+  );
+
+  await assert.rejects(
+    service.startCheckout(
+      { ...event, test_mode: true },
+      pendingOrder.user_id,
+    ),
+    /STRIPE_TEST_SECRET_KEY.*STRIPE_TEST_WEBHOOK_SECRET/,
   );
 });
 
@@ -266,6 +395,7 @@ test("revokes a ticket after a charge is fully refunded", async () => {
     details: {
       chargeId: "ch_test_ticket",
       refundId: "re_test_ticket",
+      testMode: false,
     },
   });
 });
