@@ -707,3 +707,38 @@ test("keeps open event forms across database pool restarts", async () => {
     await store.close();
   }
 });
+
+test("parks audit records after repeated delivery failures", async () => {
+  const context = await fixture();
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+    await context.store.confirmRsvp(
+      context.event.id,
+      "52345678901234567",
+      300,
+    );
+
+    const [record] = await context.store.getPendingAudit(400);
+    assert.ok(record);
+
+    for (let attempt = 1; attempt < 20; attempt += 1) {
+      await context.store.markAuditFailed(record.id, "channel unavailable", 400);
+      assert.equal(
+        (await context.store.getPendingAudit(100_000)).length,
+        1,
+        `attempt ${attempt} should still retry`,
+      );
+    }
+
+    await context.store.markAuditFailed(record.id, "channel unavailable", 400);
+    assert.deepEqual(await context.store.getPendingAudit(100_000), []);
+  } finally {
+    await context.close();
+  }
+});

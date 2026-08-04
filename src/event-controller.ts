@@ -104,8 +104,12 @@ export class EventController {
       guildId: interaction.guildId,
     };
 
-    await this.#store.createPendingEventCreate(pending);
-    await interaction.showModal(buildCreateEventDetailsModal(token));
+    // Discord allows 3 seconds to show the modal; don't let a slow Neon
+    // round-trip consume that window.
+    await Promise.all([
+      this.#store.createPendingEventCreate(pending),
+      interaction.showModal(buildCreateEventDetailsModal(token)),
+    ]);
     return true;
   }
 
@@ -279,6 +283,9 @@ export class EventController {
       interaction.fields.getTextInputValue(eventIds.ticketSalesCloseAt),
       "Ticket sales close",
     );
+    if (startsAt <= currentTimestamp()) {
+      throw new Error("Start time must be in the future.");
+    }
     if (endsAt !== undefined && endsAt <= startsAt) {
       throw new Error("Finish time must be after the start time.");
     }

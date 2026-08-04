@@ -75,7 +75,8 @@ export class TicketingService {
 
     if (reservation.order.checkout_expires_at <= currentTimestamp()) {
       throw new Error(
-        "That Checkout Session has expired. Try again in a few minutes.",
+        "Your previous checkout just expired. To make sure you aren’t " +
+          "double-charged, you can retry in about 5 minutes.",
       );
     }
 
@@ -212,10 +213,17 @@ export class TicketingService {
     };
     if (successfulRefund) details.refundId = successfulRefund.id;
 
-    await this.#store.refundTicketOrderByPaymentIntent(
+    const revoked = await this.#store.refundTicketOrderByPaymentIntent(
       paymentIntentId,
       details,
     );
+
+    if (!revoked) {
+      console.warn(
+        `Stripe refund for charge ${charge.id} (payment intent ` +
+          `${paymentIntentId}, testMode=${testMode}) matched no paid ticket order`,
+      );
+    }
   }
 
   async #fulfillCheckout(

@@ -20,11 +20,7 @@ export class AuditLogger {
   start(): void {
     if (this.#timer) return;
 
-    const flush = () => {
-      void this.flush().catch((error: unknown) => {
-        console.error("Failed to flush RSVP audit outbox", error);
-      });
-    };
+    const flush = () => void this.flush();
 
     flush();
     this.#timer = setInterval(flush, 30_000);
@@ -36,10 +32,13 @@ export class AuditLogger {
     this.#timer = undefined;
   }
 
+  // Never rejects, so every call site can safely fire-and-forget.
   async flush(): Promise<void> {
     if (this.#running) return this.#running;
 
-    this.#running = this.#flushPending();
+    this.#running = this.#flushPending().catch((error: unknown) => {
+      console.error("Failed to flush RSVP audit outbox", error);
+    });
 
     try {
       await this.#running;

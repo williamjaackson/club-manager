@@ -125,3 +125,17 @@ test("marks the audit sent even when the confirmation DM fails", async () => {
   assert.equal(markedId, record.id);
   assert.match(sent.content, /bought a ticket for/);
 });
+
+test("flush never rejects even when the store fails", async () => {
+  const logger = new AuditLogger(
+    { channels: { async fetch() { throw new Error("unreachable"); } } },
+    {
+      async getPendingAudit() {
+        throw new Error("database is down");
+      },
+    },
+    "42345678901234567",
+  );
+
+  await assert.doesNotReject(logger.flush());
+});

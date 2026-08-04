@@ -209,6 +209,10 @@ export class TicketSalesClosedError extends Error {
 
 type Queryable = Pool | PoolClient;
 
+// After this many delivery failures an audit record is parked (kept unsent,
+// never retried) so a permanently broken record can't loop forever.
+const MAX_AUDIT_ATTEMPTS = 20;
+
 export function createDatabasePool(connectionString: string): Pool {
   const pool = new Pool({
     connectionString,
@@ -1364,6 +1368,7 @@ export class Store {
         WHERE
           audit_outbox.sent_at IS NULL
           AND audit_outbox.next_attempt_at <= $1
+          AND audit_outbox.attempt_count < ${MAX_AUDIT_ATTEMPTS}
           AND events.message_id IS NOT NULL
         ORDER BY audit_outbox.id
         LIMIT $2
@@ -1400,6 +1405,13 @@ export class Store {
       Number((current.rows[0] as { attempt_count: number } | undefined)
         ?.attempt_count ?? 0) + 1;
     const delay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
+
+    if (attempts >= MAX_AUDIT_ATTEMPTS) {
+      console.error(
+        `Audit outbox record ${id} failed ${attempts} times and is parked; ` +
+          `last error: ${error.slice(0, 200)}`,
+      );
+    }
 
     await this.#pool.query(
       `

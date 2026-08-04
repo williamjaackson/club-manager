@@ -708,3 +708,24 @@ test("opens Stripe Checkout privately for an eligible paid-event member", async 
     "https://checkout.stripe.com/test",
   );
 });
+
+test("rejects wizard schedules that start in the past", async () => {
+  const controller = new EventController({}, {});
+  const token = "a".repeat(32);
+
+  await assert.rejects(
+    controller.handleModal({
+      guildId: "12345678901234567",
+      user: { id: "32345678901234567" },
+      memberPermissions: { has() { return true; } },
+      inGuild() { return true; },
+      customId: `event:create:schedule:${token}`,
+      fields: {
+        getTextInputValue(id) {
+          return id === "event-starts-at" ? "2020-01-01 10:00" : "";
+        },
+      },
+    }),
+    /Start time must be in the future/,
+  );
+});
