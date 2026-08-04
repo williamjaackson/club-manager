@@ -281,3 +281,28 @@ test("marks every test-mode interaction with the shared subtext note", () => {
   assert.match(buildTicketConfirmed(testEvent).content ?? "", note);
   assert.doesNotMatch(buildPublicEventMessage(event).content ?? "", /-# 🧪/);
 });
+
+test("shows live attendance and sold-out states on announcements", () => {
+  const paidEvent = {
+    ...event,
+    ticket_price_cents: 1250,
+    ticket_currency: "aud",
+    ticket_limit: 20,
+  };
+  const selling = buildPublicEventMessage(paidEvent, { going: 14 });
+  const soldOut = buildPublicEventMessage(paidEvent, { going: 20 });
+  const freeFull = buildPublicEventMessage({ ...event, ticket_limit: 5 }, { going: 5 });
+
+  assert.match(selling.content ?? "", /-# 🎟️ 14 sold · 6 left/);
+  assert.equal(selling.components?.[0]?.components[0]?.toJSON().disabled, false);
+
+  assert.match(soldOut.content ?? "", /-# 🎟️ 20 sold · none left/);
+  const soldOutButton = soldOut.components?.[0]?.components[0]?.toJSON();
+  assert.equal(soldOutButton?.disabled, true);
+  assert.equal(soldOutButton?.label, "Sold out");
+
+  const fullButton = freeFull.components?.[0]?.components[0]?.toJSON();
+  assert.match(freeFull.content ?? "", /-# 🙋 5 going · none left/);
+  assert.equal(fullButton?.label, "At capacity");
+  assert.equal(fullButton?.disabled, true);
+});

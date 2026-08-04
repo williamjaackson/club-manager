@@ -36,6 +36,7 @@ export class TicketingService {
   readonly #publicBaseUrl: string;
   readonly #webhookSecret: string;
   readonly #testMode: StripeTestMode | undefined;
+  readonly #onOrderChange: (eventId: number) => void;
 
   constructor(
     stripe: Stripe,
@@ -43,12 +44,14 @@ export class TicketingService {
     publicBaseUrl: string,
     webhookSecret: string,
     testMode?: StripeTestMode,
+    onOrderChange: (eventId: number) => void = () => {},
   ) {
     this.#stripe = stripe;
     this.#store = store;
     this.#publicBaseUrl = publicBaseUrl;
     this.#webhookSecret = webhookSecret;
     this.#testMode = testMode;
+    this.#onOrderChange = onOrderChange;
   }
 
   async startCheckout(event: EventRecord, userId: string): Promise<TicketCheckoutResult> {
@@ -256,7 +259,8 @@ export class TicketingService {
       details,
     );
 
-    if (!revoked) {
+    if (revoked !== undefined) this.#onOrderChange(revoked);
+    if (revoked === undefined) {
       console.warn(
         `Stripe refund for charge ${charge.id} (payment intent ` +
           `${paymentIntentId}, testMode=${testMode}) matched no paid ticket order`,
@@ -328,6 +332,7 @@ export class TicketingService {
     }
 
     await this.#store.fulfillTicketOrder(order.id, checkout.id, details);
+    this.#onOrderChange(event.id);
   }
 
   #stripeForEvent(event: EventRecord): Stripe {

@@ -25,6 +25,10 @@ import {
   isSameBrisbaneDay,
 } from "./time.js";
 
+export interface EventAttendance {
+  going: number;
+}
+
 export type EventReplyOptions = Pick<
   InteractionReplyOptions,
   "content" | "embeds" | "components"
@@ -398,7 +402,10 @@ export function buildEventPreview(event: EventRecord): InteractionEditReplyOptio
   };
 }
 
-export function buildPublicEventMessage(event: EventRecord): MessageCreateOptions {
+export function buildPublicEventMessage(
+  event: EventRecord,
+  attendance?: EventAttendance,
+): MessageCreateOptions {
   const files: AttachmentBuilder[] = [];
 
   if (event.artwork_url && event.artwork_name) {
@@ -406,8 +413,8 @@ export function buildPublicEventMessage(event: EventRecord): MessageCreateOption
   }
 
   return {
-    content: buildEventAnnouncementText(event),
-    components: [buildAdmissionRow(event)],
+    content: buildEventAnnouncementText(event, attendance),
+    components: buildAdmissionComponents(event, currentTimestamp(), attendance),
     files,
   };
 }
@@ -417,8 +424,19 @@ export function buildPublicEventMessage(event: EventRecord): MessageCreateOption
 export function buildAdmissionComponents(
   event: EventRecord,
   now = currentTimestamp(),
+  attendance?: EventAttendance,
 ): ActionRowBuilder<ButtonBuilder>[] {
-  return [buildAdmissionRow(event, admissionClosed(event, now))];
+  return [
+    buildAdmissionRow(
+      event,
+      admissionClosed(event, now),
+      attendance !== undefined && atCapacity(event, attendance),
+    ),
+  ];
+}
+
+function atCapacity(event: EventRecord, attendance: EventAttendance): boolean {
+  return typeof event.ticket_limit === "number" && attendance.going >= event.ticket_limit;
 }
 
 export function buildReminderMessage(
@@ -436,24 +454,30 @@ export function buildReminderMessage(
 function buildAdmissionRow(
   event: EventRecord,
   disabled = false,
+  soldOut = false,
 ): ActionRowBuilder<ButtonBuilder> {
-  const admission =
-    event.ticket_price_cents && event.ticket_currency
-      ? new ButtonBuilder()
-          .setCustomId(`event:buy:${event.id}`)
-          .setLabel(
-            event.test_mode
-              ? `Test checkout — ${formatTicketPrice(event)}`
-              : `Buy ticket — ${formatTicketPrice(event)}`,
-          )
-          .setEmoji("💳")
-          .setStyle(ButtonStyle.Success)
-      : new ButtonBuilder()
-          .setCustomId(`event:rsvp:${event.id}`)
-          .setLabel("RSVP")
-          .setEmoji("🎟️")
-          .setStyle(ButtonStyle.Secondary);
-  admission.setDisabled(disabled);
+  const paid = Boolean(event.ticket_price_cents && event.ticket_currency);
+  const label = soldOut
+    ? paid
+      ? "Sold out"
+      : "At capacity"
+    : paid
+      ? event.test_mode
+        ? `Test checkout — ${formatTicketPrice(event)}`
+        : `Buy ticket — ${formatTicketPrice(event)}`
+      : "RSVP";
+  const admission = paid
+    ? new ButtonBuilder()
+        .setCustomId(`event:buy:${event.id}`)
+        .setLabel(label)
+        .setEmoji("💳")
+        .setStyle(ButtonStyle.Success)
+    : new ButtonBuilder()
+        .setCustomId(`event:rsvp:${event.id}`)
+        .setLabel(label)
+        .setEmoji("🎟️")
+        .setStyle(ButtonStyle.Secondary);
+  admission.setDisabled(disabled || soldOut);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(admission);
 }
 
@@ -555,7 +579,10 @@ export function buildCancellationComplete(
   };
 }
 
-export function buildEventAnnouncementText(event: EventRecord): string {
+export function buildEventAnnouncementText(
+  event: EventRecord,
+  attendance?: EventAttendance,
+): string {
   let text = `# ${event.title}\n\n`;
   text += scheduleBlock(event, true);
   text += `${locationLine(event)}\n\n${event.announcement}`;
@@ -579,6 +606,16 @@ export function buildEventAnnouncementText(event: EventRecord): string {
         `\n${typeof event.ticket_limit === "number" ? "" : "\n"}` +
         `⏳ **RSVPs close:** <t:${rsvpClose}:F> (<t:${rsvpClose}:R>)`;
     }
+  }
+
+  if (attendance) {
+    const paid = Boolean(event.ticket_price_cents && event.ticket_currency);
+    let line = paid ? `🎟️ ${attendance.going} sold` : `🙋 ${attendance.going} going`;
+    if (typeof event.ticket_limit === "number") {
+      const left = Math.max(0, event.ticket_limit - attendance.going);
+      line += left === 0 ? " · none left" : ` · ${left} left`;
+    }
+    text += `\n\n-# ${line}`;
   }
 
   if (typeof event.edited_at === "number") {

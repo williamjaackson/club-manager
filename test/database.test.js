@@ -133,7 +133,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
         },
         449,
       ),
-      false,
+      undefined,
     );
     assert.equal(
       await context.store.refundTicketOrderByPaymentIntent(
@@ -145,7 +145,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
         },
         450,
       ),
-      true,
+      context.event.id,
     );
     assert.equal(
       await context.store.refundTicketOrderByPaymentIntent(
@@ -157,7 +157,7 @@ test("reserves capacity and fulfills a paid ticket exactly once", async () => {
         },
         451,
       ),
-      false,
+      undefined,
     );
     const refunded = await context.store.getTicketOrderForMember(
       context.event.id,
@@ -666,7 +666,7 @@ test("queues a refund notification when a ticket is revoked", async () => {
         { chargeId: "ch_refund_test", testMode: false },
         500,
       ),
-      true,
+      context.event.id,
     );
 
     const audits = await context.store.getPendingAudit(600);

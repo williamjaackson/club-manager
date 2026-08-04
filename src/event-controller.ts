@@ -53,6 +53,7 @@ import {
   buildWizardHub,
   eventIds,
 } from "./event-ui.js";
+import { findOrCreateEventWebhook } from "./event-webhook.js";
 import type { ResolvedGuildSettings, SettingsManager } from "./settings.js";
 import type { TicketingService } from "./ticketing.js";
 import {
@@ -67,6 +68,7 @@ export class EventController {
   readonly #audit: AuditLogger;
   readonly #ticketing: TicketingService;
   readonly #settings: SettingsManager;
+  readonly #refresher: { markDirty(eventId: number): void };
   readonly #webhookLookups = new Map<string, Promise<Webhook<WebhookType.Incoming>>>();
 
   constructor(
@@ -77,11 +79,13 @@ export class EventController {
       resolve: async () => ({}),
       update: async () => ({}),
     },
+    refresher: { markDirty(eventId: number): void } = { markDirty() {} },
   ) {
     this.#store = store;
     this.#audit = audit;
     this.#ticketing = ticketing;
     this.#settings = settings;
+    this.#refresher = refresher;
   }
 
   async handleCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
@@ -198,14 +202,15 @@ export class EventController {
       return 1;
     }
 
-    const components = buildAdmissionComponents(event);
+    const attendance = await this.#store.getEventAttendance(event.id);
+    const components = buildAdmissionComponents(event, undefined, attendance);
     const updates: Promise<unknown>[] = [];
     if (event.message_id) {
       updates.push(
         this.#getOrCreateEventWebhook(channel, interaction.client.user.id).then(
           (webhook) =>
             webhook.editMessage(event.message_id!, {
-              content: buildEventAnnouncementText(event),
+              content: buildEventAnnouncementText(event, attendance),
               components,
             }),
         ),
@@ -848,7 +853,7 @@ export class EventController {
       webhook = await this.#getOrCreateEventWebhook(channel, interaction.client.user.id);
       const identity = commandRunnerIdentity(interaction);
       message = await webhook.send({
-        ...buildPublicEventMessage(event),
+        ...buildPublicEventMessage(event, { going: 0 }),
         ...identity,
         withComponents: true,
       });
@@ -888,7 +893,7 @@ export class EventController {
     const existingLookup = this.#webhookLookups.get(channel.id);
     if (existingLookup) return existingLookup;
 
-    const lookup = this.#findOrCreateEventWebhook(channel, botUserId);
+    const lookup = findOrCreateEventWebhook(channel, botUserId);
     this.#webhookLookups.set(channel.id, lookup);
 
     try {
@@ -898,27 +903,6 @@ export class EventController {
         this.#webhookLookups.delete(channel.id);
       }
     }
-  }
-
-  async #findOrCreateEventWebhook(
-    channel: TextChannel | NewsChannel,
-    botUserId: string,
-  ): Promise<Webhook<WebhookType.Incoming>> {
-    const webhooks = await channel.fetchWebhooks();
-    const existing = webhooks.find(
-      (candidate) =>
-        candidate.name === eventWebhookName &&
-        candidate.owner?.id === botUserId &&
-        candidate.isIncoming() &&
-        Boolean(candidate.token),
-    );
-
-    if (existing?.isIncoming()) return existing;
-
-    return channel.createWebhook({
-      name: eventWebhookName,
-      reason: "Publish event announcements as the command runner",
-    });
   }
 
   async #discard(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
@@ -965,6 +949,7 @@ export class EventController {
 
     const result = await this.#store.confirmRsvp(event.id, interaction.user.id);
     await interaction.editReply(buildRsvpComplete(event, result.changed));
+    if (result.changed) this.#refresher.markDirty(event.id);
     void this.#audit.flush();
   }
 
@@ -990,6 +975,7 @@ export class EventController {
     }
 
     const checkout = await this.#ticketing.startCheckout(event, interaction.user.id);
+    if (!checkout.alreadyPaid) this.#refresher.markDirty(event.id);
     await interaction.editReply(
       checkout.alreadyPaid
         ? buildTicketConfirmed(event)
@@ -1000,6 +986,7 @@ export class EventController {
   async #cancelRsvp(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     const result = await this.#store.cancelRsvp(event.id, interaction.user.id);
     await interaction.editReply(buildCancellationComplete(event, result.changed));
+    if (result.changed) this.#refresher.markDirty(event.id);
     void this.#audit.flush();
   }
 
@@ -1229,8 +1216,6 @@ function parseAnnouncementLink(
   if (!match?.[1] || !match[2] || !match[3]) return undefined;
   return { guildId: match[1], channelId: match[2], messageId: match[3] };
 }
-
-const eventWebhookName = "Club Manager Event Announcements";
 
 function commandRunnerIdentity(interaction: ButtonInteraction): {
   username: string;
