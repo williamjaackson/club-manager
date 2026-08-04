@@ -181,6 +181,10 @@ export interface RsvpChange {
   status: RsvpStatus;
 }
 
+export interface CouponListRecord extends CouponRecord {
+  event_title: string | null;
+}
+
 export interface CouponRecord {
   id: number;
   guild_id: string;
@@ -1739,6 +1743,62 @@ export class Store {
     } finally {
       client.release();
     }
+  }
+
+  async listCoupons(
+    guildId: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ coupons: CouponListRecord[]; total: number }> {
+    const [rows, count] = await Promise.all([
+      this.#pool.query(
+        `
+          SELECT coupons.*, events.title AS event_title
+          FROM coupons
+          LEFT JOIN events ON events.id = coupons.event_id
+          WHERE coupons.guild_id = $1
+          ORDER BY coupons.created_at DESC, coupons.id DESC
+          LIMIT $2 OFFSET $3
+        `,
+        [guildId, limit, offset],
+      ),
+      this.#pool.query(
+        "SELECT COUNT(*)::integer AS count FROM coupons WHERE guild_id = $1",
+        [guildId],
+      ),
+    ]);
+    return {
+      coupons: rows.rows as CouponListRecord[],
+      total: Number((count.rows[0] as { count: number }).count),
+    };
+  }
+
+  async getCoupon(
+    couponId: number,
+    guildId: string,
+  ): Promise<CouponListRecord | undefined> {
+    const result = await this.#pool.query(
+      `
+        SELECT coupons.*, events.title AS event_title
+        FROM coupons
+        LEFT JOIN events ON events.id = coupons.event_id
+        WHERE coupons.id = $1 AND coupons.guild_id = $2
+      `,
+      [couponId, guildId],
+    );
+    return result.rows[0] as CouponListRecord | undefined;
+  }
+
+  // Redeemed coupons are part of the payment record and cannot be revoked.
+  async revokeCoupon(couponId: number, guildId: string): Promise<boolean> {
+    const result = await this.#pool.query(
+      `
+        DELETE FROM coupons
+        WHERE id = $1 AND guild_id = $2 AND redeemed_at IS NULL
+      `,
+      [couponId, guildId],
+    );
+    return result.rowCount === 1;
   }
 
   async createCoupon(

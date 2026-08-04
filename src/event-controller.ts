@@ -26,6 +26,12 @@ import {
   describeSettings,
 } from "./config-ui.js";
 import {
+  buildCouponList,
+  buildCouponManageView,
+  COUPON_LIST_PAGE_SIZE,
+  couponAdminIds,
+} from "./coupon-admin-ui.js";
+import {
   EventAdmissionClosedError,
   EventFinishedError,
   type EventRecord,
@@ -740,6 +746,11 @@ export class EventController {
     if (!interaction.guildId) {
       throw new Error("Coupons can only be given inside a server.");
     }
+    if (interaction.options.getSubcommand() === "list") {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await this.#renderCouponList(interaction, 0);
+      return;
+    }
     if (interaction.options.getSubcommand() !== "give") {
       throw new Error("Unknown coupon subcommand.");
     }
@@ -802,6 +813,77 @@ export class EventController {
         `${expiry} ${delivery}`,
       components: [],
     });
+  }
+
+  async #handleCouponAdminAction(
+    interaction: ButtonInteraction,
+    action: CouponAdminAction,
+    value: number,
+  ): Promise<void> {
+    if (action === "page") {
+      await this.#renderCouponList(interaction, value);
+      return;
+    }
+    if (action === "manage") {
+      await this.#renderCouponManage(interaction, value);
+      return;
+    }
+
+    // action === "revoke"
+    if (!interaction.guildId) {
+      throw new Error("Coupons can only be managed inside a server.");
+    }
+    const coupon = await this.#store.getCoupon(value, interaction.guildId);
+    if (!coupon) {
+      await interaction.editReply({
+        content: "That coupon no longer exists.",
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+    const revoked = await this.#store.revokeCoupon(value, interaction.guildId);
+    await interaction.editReply({
+      content: revoked
+        ? `🗑️ Revoked coupon #${value} (${coupon.percent_off}% off for <@${coupon.user_id}>).`
+        : `Coupon #${value} has already been redeemed and cannot be revoked.`,
+      embeds: [],
+      components: [],
+    });
+  }
+
+  async #renderCouponList(
+    interaction: ButtonInteraction | ChatInputCommandInteraction,
+    offset: number,
+  ): Promise<void> {
+    if (!interaction.guildId) {
+      throw new Error("Coupons can only be listed inside a server.");
+    }
+    const { coupons, total } = await this.#store.listCoupons(
+      interaction.guildId,
+      offset,
+      COUPON_LIST_PAGE_SIZE,
+    );
+    await interaction.editReply(buildCouponList(coupons, total, offset));
+  }
+
+  async #renderCouponManage(
+    interaction: ButtonInteraction | StringSelectMenuInteraction,
+    couponId: number,
+  ): Promise<void> {
+    if (!interaction.guildId) {
+      throw new Error("Coupons can only be managed inside a server.");
+    }
+    const coupon = await this.#store.getCoupon(couponId, interaction.guildId);
+    if (!coupon) {
+      await interaction.editReply({
+        content: "That coupon no longer exists.",
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+    await interaction.editReply(buildCouponManageView(coupon));
   }
 
   async #handleAdminAction(
@@ -1013,13 +1095,19 @@ export class EventController {
   }
 
   async handleSelect(interaction: StringSelectMenuInteraction): Promise<boolean> {
-    if (interaction.customId !== eventAdminIds.select) return false;
-
-    this.#requireAdministrator(interaction);
-    await interaction.deferUpdate();
-    const eventId = Number(interaction.values[0]);
-    await this.#renderEventManage(interaction, eventId);
-    return true;
+    if (interaction.customId === eventAdminIds.select) {
+      this.#requireAdministrator(interaction);
+      await interaction.deferUpdate();
+      await this.#renderEventManage(interaction, Number(interaction.values[0]));
+      return true;
+    }
+    if (interaction.customId === couponAdminIds.select) {
+      this.#requireAdministrator(interaction);
+      await interaction.deferUpdate();
+      await this.#renderCouponManage(interaction, Number(interaction.values[0]));
+      return true;
+    }
+    return false;
   }
 
   async handleButton(interaction: ButtonInteraction): Promise<boolean> {
@@ -1028,6 +1116,18 @@ export class EventController {
       this.#requireAdministrator(interaction);
       await interaction.deferUpdate();
       await this.#handleAdminAction(interaction, admin.action, admin.value);
+      return true;
+    }
+
+    const couponAdmin = parseCouponAdminButton(interaction.customId);
+    if (couponAdmin) {
+      this.#requireAdministrator(interaction);
+      await interaction.deferUpdate();
+      await this.#handleCouponAdminAction(
+        interaction,
+        couponAdmin.action,
+        couponAdmin.value,
+      );
       return true;
     }
 
@@ -1489,6 +1589,20 @@ function parseEventButton(
   const eventId = Number(match[2]);
 
   return isEventButtonAction(action) ? { action, eventId } : undefined;
+}
+
+const couponAdminActions = ["page", "manage", "revoke"] as const;
+
+type CouponAdminAction = (typeof couponAdminActions)[number];
+
+function parseCouponAdminButton(
+  customId: string,
+): { action: CouponAdminAction; value: number } | undefined {
+  const match = /^coupon-admin:([a-z-]+):(\d+)$/.exec(customId);
+  if (!match?.[1]) return undefined;
+  const action = match[1];
+  if (!(couponAdminActions as readonly string[]).includes(action)) return undefined;
+  return { action: action as CouponAdminAction, value: Number(match[2]) };
 }
 
 const eventAdminActions = [
