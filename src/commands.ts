@@ -24,6 +24,40 @@ export const commandDefinitions = [
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("coupon")
+    .setDescription("Give a member a discount coupon for paid events")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("give")
+        .setDescription("DM a member a percent-off coupon")
+        .addUserOption((option) =>
+          option
+            .setName("member")
+            .setDescription("Member who receives the coupon")
+            .setRequired(true),
+        )
+        .addIntegerOption((option) =>
+          option
+            .setName("percent")
+            .setDescription("Discount percentage (1-100)")
+            .setMinValue(1)
+            .setMaxValue(100)
+            .setRequired(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("event")
+            .setDescription("Announcement link to limit the coupon to one event"),
+        )
+        .addStringOption((option) =>
+          option
+            .setName("expires")
+            .setDescription("Expiry as YYYY-MM-DD HH:mm Brisbane time"),
+        ),
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("config")
     .setDescription("Configure Club Manager for this server")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)

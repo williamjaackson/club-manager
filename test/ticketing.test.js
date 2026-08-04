@@ -50,6 +50,9 @@ test("creates an idempotent Stripe Checkout Session for a ticket reservation", a
   let createParameters;
   let requestOptions;
   const store = {
+    async findBestCoupon() {
+      return undefined;
+    },
     async reserveTicketCheckout(eventId, userId) {
       assert.equal(eventId, event.id);
       assert.equal(userId, pendingOrder.user_id);
@@ -134,6 +137,9 @@ test("routes test events and webhooks through Stripe sandbox mode", async () => 
     customer_details: null,
   };
   const store = {
+    async findBestCoupon() {
+      return undefined;
+    },
     async reserveTicketCheckout() {
       return { alreadyPaid: false, order: pendingOrder };
     },
@@ -221,6 +227,9 @@ test("does not reserve test-event capacity without complete sandbox credentials"
   const service = new TicketingService(
     {},
     {
+      async findBestCoupon() {
+        return undefined;
+      },
       async reserveTicketCheckout() {
         assert.fail("configuration must be checked before reserving capacity");
       },
@@ -428,4 +437,122 @@ test("does not revoke a ticket after a partial refund", async () => {
   await service.handleWebhook(Buffer.from("partial"), "test-signature");
 
   assert.equal(revocations, 0);
+});
+
+test("applies the member's best coupon to Stripe Checkout", async () => {
+  let created;
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "32345678901234567",
+    title: "Discounted event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Come along.",
+    ticket_price_cents: 2000,
+    ticket_currency: "aud",
+    ticket_limit: null,
+    test_mode: false,
+    starts_at: null,
+    ends_at: null,
+    ticket_sales_close_at: null,
+    status: "published",
+  };
+  const store = {
+    async findBestCoupon() {
+      return { id: 7, percent_off: 25 };
+    },
+    async reserveTicketCheckout() {
+      return {
+        alreadyPaid: false,
+        order: {
+          id: 9,
+          attempt: 1,
+          checkout_url: null,
+          checkout_expires_at: Math.floor(Date.now() / 1000) + 1800,
+        },
+      };
+    },
+    async attachTicketCheckout(orderId, _attempt, sessionId, url) {
+      return { id: orderId, checkout_session_id: sessionId, checkout_url: url };
+    },
+  };
+  const stripe = {
+    checkout: {
+      sessions: {
+        async create(params) {
+          created = params;
+          return { id: "cs_coupon", url: "https://checkout.stripe.com/coupon" };
+        },
+      },
+    },
+  };
+  const ticketing = new TicketingService(
+    stripe,
+    store,
+    "https://club.example.com",
+    "whsec_primary",
+  );
+
+  const result = await ticketing.startCheckout(event, "52345678901234567");
+
+  assert.equal(created.line_items[0].price_data.unit_amount, 1500);
+  assert.equal(created.metadata.coupon_id, "7");
+  assert.equal(created.metadata.coupon_percent_off, "25");
+  assert.equal(result.alreadyPaid, false);
+  assert.deepEqual(result.discount, { percentOff: 25, discountedCents: 1500 });
+});
+
+test("bypasses Stripe entirely for a 100% coupon", async () => {
+  let fulfilled;
+  const event = {
+    id: 43,
+    guild_id: "12345678901234567",
+    ticket_price_cents: 500,
+    ticket_currency: "aud",
+    test_mode: false,
+    status: "published",
+  };
+  const store = {
+    async findBestCoupon() {
+      return { id: 8, percent_off: 100 };
+    },
+    async reserveTicketCheckout() {
+      return {
+        alreadyPaid: false,
+        order: {
+          id: 10,
+          attempt: 1,
+          checkout_url: null,
+          checkout_expires_at: Math.floor(Date.now() / 1000) + 1800,
+        },
+      };
+    },
+    async fulfillCouponFreeOrder(orderId, couponId) {
+      fulfilled = { orderId, couponId };
+      return { id: orderId, status: "paid", amount_total: 0 };
+    },
+  };
+  const stripe = {
+    checkout: {
+      sessions: {
+        async create() {
+          throw new Error("Stripe must not be called for free coupon orders");
+        },
+      },
+    },
+  };
+  const ticketing = new TicketingService(
+    stripe,
+    store,
+    "https://club.example.com",
+    "whsec_primary",
+  );
+
+  const result = await ticketing.startCheckout(event, "52345678901234567");
+
+  assert.deepEqual(fulfilled, { orderId: 10, couponId: 8 });
+  assert.equal(result.alreadyPaid, true);
+  assert.equal(result.order.amount_total, 0);
 });

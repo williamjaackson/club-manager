@@ -535,16 +535,23 @@ export function buildRsvpComplete(
 export function buildTicketCheckout(
   event: EventRecord,
   checkoutUrl: string,
+  discount?: { percentOff: number; discountedCents: number },
 ): EventReplyOptions {
   const checkout = new ButtonBuilder()
     .setLabel(event.test_mode ? "Open Stripe test checkout" : "Open secure checkout")
     .setURL(checkoutUrl)
     .setStyle(ButtonStyle.Link);
+  const price = discount
+    ? `~~${formatTicketPrice(event)}~~ **${formatCurrencyAmount(
+        discount.discountedCents,
+        event.ticket_currency ?? "aud",
+      )}** · ${discount.percentOff}% off coupon applied`
+    : `**${formatTicketPrice(event)}**`;
   return {
     content: withTestNote(
       event,
       `A ticket for **${event.title}** is reserved for about 30 minutes.\n\n` +
-        `Price: **${formatTicketPrice(event)}**\n` +
+        `Price: ${price}\n` +
         (event.test_mode
           ? "Use a Stripe test card such as 4242 4242 4242 4242."
           : "Stripe will collect payment and email your receipt."),

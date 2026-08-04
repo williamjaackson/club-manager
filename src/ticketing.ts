@@ -8,13 +8,27 @@ import type {
 import { formatCurrencyAmount } from "./money.js";
 import { currentTimestamp } from "./time.js";
 
+export interface CheckoutDiscount {
+  percentOff: number;
+  discountedCents: number;
+}
+
 export type TicketCheckoutResult =
   | { alreadyPaid: true; order: TicketOrderRecord }
   | {
       alreadyPaid: false;
       order: TicketOrderRecord;
       checkoutUrl: string;
+      discount?: CheckoutDiscount;
     };
+
+// Stripe cannot charge less than A$0.50; below that a coupon makes the
+// ticket free and Stripe is bypassed entirely.
+const STRIPE_MINIMUM_CENTS = 50;
+
+export function discountedPriceCents(priceCents: number, percentOff: number): number {
+  return Math.round((priceCents * (100 - percentOff)) / 100);
+}
 
 export class InvalidStripeWebhookError extends Error {
   constructor(message: string) {
@@ -85,11 +99,28 @@ export class TicketingService {
     }
 
     const order = reservation.order;
+    const coupon = await this.#store.findBestCoupon(event.guild_id, userId, event.id);
+    const chargeCents = coupon
+      ? discountedPriceCents(event.ticket_price_cents, coupon.percent_off)
+      : event.ticket_price_cents;
+
+    if (coupon && chargeCents < STRIPE_MINIMUM_CENTS) {
+      const paid = await this.#store.fulfillCouponFreeOrder(order.id, coupon.id);
+      this.#onOrderChange(event.id);
+      return { alreadyPaid: true, order: paid };
+    }
+
     const metadata = {
       ticket_order_id: String(order.id),
       event_id: String(event.id),
       discord_user_id: userId,
       test_event: String(event.test_mode === true),
+      ...(coupon
+        ? {
+            coupon_id: String(coupon.id),
+            coupon_percent_off: String(coupon.percent_off),
+          }
+        : {}),
     };
     const session = await stripe.checkout.sessions.create(
       {
@@ -100,7 +131,7 @@ export class TicketingService {
             quantity: 1,
             price_data: {
               currency: event.ticket_currency,
-              unit_amount: event.ticket_price_cents,
+              unit_amount: chargeCents,
               product_data: {
                 name: event.title,
                 description: `${event.schedule_text} — ${event.location}`.slice(0, 500),
@@ -132,6 +163,14 @@ export class TicketingService {
       alreadyPaid: false,
       order: attached,
       checkoutUrl: session.url,
+      ...(coupon
+        ? {
+            discount: {
+              percentOff: coupon.percent_off,
+              discountedCents: chargeCents,
+            },
+          }
+        : {}),
     };
   }
 
@@ -338,10 +377,17 @@ export class TicketingService {
       throw new Error("Checkout Session mode does not match the ticket event.");
     }
 
+    const couponId = integerMetadata(checkout.metadata?.coupon_id);
+    const couponPercentOff = integerMetadata(checkout.metadata?.coupon_percent_off);
+    const expectedTotal =
+      couponPercentOff !== undefined && event.ticket_price_cents !== null
+        ? discountedPriceCents(event.ticket_price_cents, couponPercentOff)
+        : event.ticket_price_cents;
+
     if (
       checkout.amount_total === null ||
       checkout.currency === null ||
-      checkout.amount_total !== event.ticket_price_cents ||
+      checkout.amount_total !== expectedTotal ||
       checkout.currency !== event.ticket_currency
     ) {
       throw new Error("Checkout Session total does not match the ticket price.");
@@ -363,6 +409,8 @@ export class TicketingService {
     if (checkout.customer_details?.name) {
       details.customerName = checkout.customer_details.name;
     }
+
+    if (couponId !== undefined) details.couponId = couponId;
 
     await this.#store.fulfillTicketOrder(order.id, checkout.id, details);
     this.#onOrderChange(event.id);

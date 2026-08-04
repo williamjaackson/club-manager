@@ -48,6 +48,15 @@ The command is hidden from non-administrators by its Discord command
 permissions. Every create, publish, and discard interaction also checks the
 member's `Administrator` permission at runtime.
 
+Run `/coupon give member:<member> percent:<1-100>` to give a member a
+percent-off coupon, optionally limited to one event (`event:<announcement
+link>`) or with an expiry (`expires:<YYYY-MM-DD HH:mm>` Brisbane time). The
+member is DMed immediately, and the discount applies automatically at their
+next checkout, shown as a struck-through price. Coupons that bring the price
+under Stripe's A$0.50 minimum (including 100% off) skip Stripe entirely and
+confirm the ticket for free. Each coupon can be used once; the highest
+applicable discount wins.
+
 Run `/reminder announcement:<event message link> message:<your text>` to reply
 to a published announcement. The reminder supports mentions such as `@everyone`
 and repeats the event's trusted RSVP or ticket button. Closed admission buttons
