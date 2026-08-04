@@ -77,6 +77,7 @@ export class AuditLogger {
       interest_ticket: "showed ticket interest in",
       rsvp: "RSVP’d for",
       cancel: "cancelled their RSVP for",
+      ticket_paid: "bought a ticket for",
     }[record.action];
     const eventUrl =
       `https://discord.com/channels/${record.guild_id}/` +
@@ -91,5 +92,31 @@ export class AuditLogger {
         users: [record.user_id],
       },
     });
+
+    if (record.action === "ticket_paid") {
+      await this.#sendTicketConfirmation(record, eventUrl);
+    }
+  }
+
+  // Members can block DMs, so a failed confirmation must not keep the
+  // outbox record retrying forever after the channel post succeeded.
+  async #sendTicketConfirmation(
+    record: AuditOutboxRecord,
+    eventUrl: string,
+  ): Promise<void> {
+    try {
+      const user = await this.#client.users.fetch(record.user_id);
+      await user.send(
+        (record.test_mode
+          ? `✅ Your test ticket for **${escapeMarkdown(record.title)}** is confirmed. No real payment was made.`
+          : `✅ Your ticket for **${escapeMarkdown(record.title)}** is confirmed. Stripe has emailed your receipt.`) +
+          ` ${eventUrl}`,
+      );
+    } catch (error) {
+      console.error(
+        `Failed to DM ticket confirmation for audit ${record.id}`,
+        error,
+      );
+    }
   }
 }
