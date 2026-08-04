@@ -18,6 +18,12 @@ import {
 } from "discord.js";
 import type { AuditLogger } from "./audit.js";
 import {
+  buildConfigModal,
+  configIds,
+  configModalId,
+  describeSettings,
+} from "./config-ui.js";
+import {
   EventAdmissionClosedError,
   EventFinishedError,
   type EventRecord,
@@ -46,7 +52,7 @@ import {
   buildTicketConfirmed,
   eventIds,
 } from "./event-ui.js";
-import { rsvpEligibility } from "./rsvp-eligibility.js";
+import type { ResolvedGuildSettings, SettingsManager } from "./settings.js";
 import type { TicketingService } from "./ticketing.js";
 import {
   currentTimestamp,
@@ -59,12 +65,22 @@ export class EventController {
   readonly #store: Store;
   readonly #audit: AuditLogger;
   readonly #ticketing: TicketingService;
+  readonly #settings: SettingsManager;
   readonly #webhookLookups = new Map<string, Promise<Webhook<WebhookType.Incoming>>>();
 
-  constructor(store: Store, audit: AuditLogger, ticketing: TicketingService) {
+  constructor(
+    store: Store,
+    audit: AuditLogger,
+    ticketing: TicketingService,
+    settings: SettingsManager = {
+      resolve: async () => ({}),
+      update: async () => ({}),
+    },
+  ) {
     this.#store = store;
     this.#audit = audit;
     this.#ticketing = ticketing;
+    this.#settings = settings;
   }
 
   async handleCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
@@ -78,6 +94,16 @@ export class EventController {
 
     if (interaction.commandName === "reminder") {
       await this.#sendReminder(interaction);
+      return true;
+    }
+
+    if (interaction.commandName === "config") {
+      this.#requireAdministrator(interaction);
+      if (!interaction.guildId) {
+        throw new Error("Settings can only be changed inside a server.");
+      }
+      const current = await this.#settings.resolve(interaction.guildId);
+      await interaction.showModal(buildConfigModal(current));
       return true;
     }
 
@@ -200,6 +226,11 @@ export class EventController {
   }
 
   async handleModal(interaction: ModalSubmitInteraction): Promise<boolean> {
+    if (interaction.customId === configModalId) {
+      await this.#saveConfig(interaction);
+      return true;
+    }
+
     const parsed = parseEventWizardStep(interaction.customId);
     if (!parsed) return false;
 
@@ -219,6 +250,39 @@ export class EventController {
         await this.#finishEventWizard(interaction, parsed.token);
         return true;
     }
+  }
+
+  async #saveConfig(interaction: ModalSubmitInteraction): Promise<void> {
+    this.#requireAdministrator(interaction);
+    if (!interaction.guildId) {
+      throw new Error("Settings can only be changed inside a server.");
+    }
+
+    const channel = interaction.fields
+      .getSelectedChannels(configIds.logChannel, true, [ChannelType.GuildText])
+      .first();
+    if (!channel) {
+      throw new Error("Select a channel for the RSVP log.");
+    }
+    const connectedRole = interaction.fields
+      .getSelectedRoles(configIds.connectedRole, false)
+      ?.first();
+    const exemptRole = interaction.fields
+      .getSelectedRoles(configIds.exemptRole, false)
+      ?.first();
+    const verificationUrl = optionalHttpsUrl(
+      interaction.fields.getTextInputValue(configIds.verificationUrl),
+      "Verification message link",
+    );
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const saved = await this.#settings.update(interaction.guildId, {
+      rsvpLogChannelId: channel.id,
+      ...(connectedRole ? { connectedRoleId: connectedRole.id } : {}),
+      ...(exemptRole ? { exemptRoleId: exemptRole.id } : {}),
+      ...(verificationUrl ? { verificationMessageUrl: verificationUrl } : {}),
+    });
+    await interaction.editReply({ content: describeSettings(saved), components: [] });
   }
 
   async #saveEventDetails(
@@ -661,8 +725,8 @@ export class EventController {
     await this.#recordInterest(event, interaction.user.id, "rsvp");
     this.#requireRsvpOpen(event);
 
-    if (!this.#canRsvp(interaction)) {
-      await interaction.editReply(this.#verificationRequiredReply());
+    if (!(await this.#canRsvp(interaction))) {
+      await interaction.editReply(await this.#verificationRequiredReply(interaction));
       return;
     }
 
@@ -677,8 +741,8 @@ export class EventController {
     this.#requireFreeEvent(event);
     this.#requireRsvpOpen(event);
 
-    if (!this.#canRsvp(interaction)) {
-      await interaction.editReply(this.#verificationRequiredReply());
+    if (!(await this.#canRsvp(interaction))) {
+      await interaction.editReply(await this.#verificationRequiredReply(interaction));
       return;
     }
 
@@ -699,8 +763,8 @@ export class EventController {
     await this.#recordInterest(event, interaction.user.id, "ticket");
     this.#requireTicketSalesOpen(event);
 
-    if (!this.#canRsvp(interaction)) {
-      await interaction.editReply(this.#verificationRequiredReply());
+    if (!(await this.#canRsvp(interaction))) {
+      await interaction.editReply(await this.#verificationRequiredReply(interaction));
       return;
     }
 
@@ -784,25 +848,34 @@ export class EventController {
     }
   }
 
-  #canRsvp(interaction: ButtonInteraction): boolean {
+  async #canRsvp(interaction: ButtonInteraction): Promise<boolean> {
+    const settings = await this.#guildSettings(interaction);
+    const allowedRoleIds = [settings.connectedRoleId, settings.exemptRoleId].filter(
+      (roleId): roleId is string => Boolean(roleId),
+    );
+    // With no verification roles configured, every member may respond.
+    if (allowedRoleIds.length === 0) return true;
+
     const roles = interaction.member?.roles;
     if (!roles) return false;
-
-    const allowedRoleIds = [
-      rsvpEligibility.connectedRoleId,
-      rsvpEligibility.exemptRoleId,
-    ];
 
     return Array.isArray(roles)
       ? allowedRoleIds.some((roleId) => roles.includes(roleId))
       : allowedRoleIds.some((roleId) => roles.cache.has(roleId));
   }
 
-  #verificationRequiredReply(): { content: string; embeds: []; components: [] } {
+  async #guildSettings(interaction: ButtonInteraction): Promise<ResolvedGuildSettings> {
+    return interaction.guildId ? this.#settings.resolve(interaction.guildId) : {};
+  }
+
+  async #verificationRequiredReply(
+    interaction: ButtonInteraction,
+  ): Promise<{ content: string; embeds: []; components: [] }> {
+    const settings = await this.#guildSettings(interaction);
     return {
-      content:
-        "Hey, please verify first, then try again: " +
-        "https://discord.com/channels/1214387742293626940/1257896790934421535/1348722902375071785",
+      content: settings.verificationMessageUrl
+        ? `Hey, please verify first, then try again: ${settings.verificationMessageUrl}`
+        : "Hey, please verify first, then try again. Ask an administrator where to verify.",
       embeds: [],
       components: [],
     };

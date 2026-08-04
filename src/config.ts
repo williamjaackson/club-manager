@@ -22,10 +22,11 @@ function port(value: string | undefined): number {
   return parsed;
 }
 
-function snowflake(name: string, fallback?: string): string {
-  const value = process.env[name]?.trim() || fallback;
+function optionalSnowflake(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  if (!value) return undefined;
 
-  if (!value || !/^\d{17,20}$/.test(value)) {
+  if (!/^\d{17,20}$/.test(value)) {
     throw new Error(`${name} must be a valid Discord ID`);
   }
 
@@ -54,5 +55,10 @@ export const config = {
   stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
   stripeTestSecretKey: optional("STRIPE_TEST_SECRET_KEY"),
   stripeTestWebhookSecret: optional("STRIPE_TEST_WEBHOOK_SECRET"),
-  rsvpLogChannelId: snowflake("RSVP_LOG_CHANNEL_ID", "1530755171645132921"),
+  // Env values below are fallbacks only; per-guild values set with /config
+  // take precedence (see src/settings.ts).
+  rsvpLogChannelId: optionalSnowflake("RSVP_LOG_CHANNEL_ID"),
+  verificationMessageUrl: optional("VERIFICATION_MESSAGE_URL"),
+  connectedRoleId: optionalSnowflake("STUDENT_CONNECTION_ROLE_ID"),
+  exemptRoleId: optionalSnowflake("STUDENT_NUMBER_EXEMPT_ROLE_ID"),
 };

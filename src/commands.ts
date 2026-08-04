@@ -18,6 +18,11 @@ export const commandDefinitions = [
       subcommand.setName("create").setDescription("Create a new event announcement"),
     )
     .toJSON(),
+  new SlashCommandBuilder()
+    .setName("config")
+    .setDescription("Configure Club Manager for this server")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .toJSON(),
   new ContextMenuCommandBuilder()
     .setName("Close Event")
     .setType(ApplicationCommandType.Message)
