@@ -81,6 +81,7 @@ export class AuditLogger {
       rsvp: "RSVP’d for",
       cancel: "cancelled their RSVP for",
       ticket_paid: "bought a ticket for",
+      ticket_refunded: "had their ticket refunded for",
     }[record.action];
     const eventUrl =
       `https://discord.com/channels/${record.guild_id}/` +
@@ -96,28 +97,33 @@ export class AuditLogger {
       },
     });
 
-    if (record.action === "ticket_paid") {
-      await this.#sendTicketConfirmation(record, eventUrl);
+    if (record.action === "ticket_paid" || record.action === "ticket_refunded") {
+      await this.#sendTicketDm(record, eventUrl);
     }
   }
 
   // Members can block DMs, so a failed confirmation must not keep the
   // outbox record retrying forever after the channel post succeeded.
-  async #sendTicketConfirmation(
-    record: AuditOutboxRecord,
-    eventUrl: string,
-  ): Promise<void> {
+  async #sendTicketDm(record: AuditOutboxRecord, eventUrl: string): Promise<void> {
+    const title = escapeMarkdown(record.title);
+    let content: string;
+    if (record.action === "ticket_paid") {
+      content =
+        `✅ Your ticket for **${title}** is confirmed.` +
+        (record.test_mode ? "" : " Stripe has emailed your receipt.");
+    } else {
+      content =
+        `↩️ Your ticket for **${title}** was refunded and is no longer valid.` +
+        (record.test_mode ? "" : " Stripe will return the payment to your card.");
+    }
+    if (record.detail) content += ` ${record.detail}`;
+
+    const note = testModeNote(record.test_mode);
     try {
       const user = await this.#client.users.fetch(record.user_id);
-      const note = testModeNote(record.test_mode);
-      await user.send(
-        `✅ Your ticket for **${escapeMarkdown(record.title)}** is confirmed.` +
-          (record.test_mode ? "" : " Stripe has emailed your receipt.") +
-          ` ${eventUrl}` +
-          (note ? `\n${note}` : ""),
-      );
+      await user.send(`${content} ${eventUrl}${note ? `\n${note}` : ""}`);
     } catch (error) {
-      console.error(`Failed to DM ticket confirmation for audit ${record.id}`, error);
+      console.error(`Failed to DM ticket notification for audit ${record.id}`, error);
     }
   }
 }

@@ -11,7 +11,8 @@ export type AuditAction =
   | "interest_ticket"
   | "rsvp"
   | "cancel"
-  | "ticket_paid";
+  | "ticket_paid"
+  | "ticket_refunded";
 export type InterestKind = "rsvp" | "ticket";
 export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
@@ -157,6 +158,7 @@ export interface AuditOutboxRecord {
   event_id: number;
   user_id: string;
   action: AuditAction;
+  detail: string | null;
   title: string;
   guild_id: string;
   announcement_channel_id: string;
@@ -410,7 +412,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         action TEXT NOT NULL CONSTRAINT audit_outbox_action_check
           CHECK (action IN (
             'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-            'ticket_paid'
+            'ticket_paid', 'ticket_refunded'
           )),
         created_at DOUBLE PRECISION NOT NULL,
         next_attempt_at DOUBLE PRECISION NOT NULL,
@@ -419,12 +421,13 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         last_error TEXT
       );
 
+      ALTER TABLE audit_outbox ADD COLUMN IF NOT EXISTS detail TEXT;
       ALTER TABLE audit_outbox
         DROP CONSTRAINT IF EXISTS audit_outbox_action_check;
       ALTER TABLE audit_outbox ADD CONSTRAINT audit_outbox_action_check
         CHECK (action IN (
           'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-          'ticket_paid'
+          'ticket_paid', 'ticket_refunded'
         ));
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
@@ -1255,31 +1258,55 @@ export class Store {
     },
     now = currentTimestamp(),
   ): Promise<boolean> {
-    const result = await this.#pool.query(
-      `
-        UPDATE ticket_orders
-        SET
-          status = 'refunded',
-          stripe_charge_id = $1,
-          stripe_refund_id = $2,
-          updated_at = $3,
-          refunded_at = $4
-        WHERE
-          stripe_payment_intent_id = $5
-          AND status = 'paid'
-          AND event_id IN (SELECT id FROM events WHERE test_mode = $6)
-        RETURNING id
-      `,
-      [
-        details.chargeId,
-        details.refundId ?? null,
-        now,
-        now,
-        paymentIntentId,
-        details.testMode,
-      ],
-    );
-    return result.rows.length > 0;
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const result = await client.query(
+        `
+          UPDATE ticket_orders
+          SET
+            status = 'refunded',
+            stripe_charge_id = $1,
+            stripe_refund_id = $2,
+            updated_at = $3,
+            refunded_at = $4
+          WHERE
+            stripe_payment_intent_id = $5
+            AND status = 'paid'
+            AND event_id IN (SELECT id FROM events WHERE test_mode = $6)
+          RETURNING event_id, user_id
+        `,
+        [
+          details.chargeId,
+          details.refundId ?? null,
+          now,
+          now,
+          paymentIntentId,
+          details.testMode,
+        ],
+      );
+      const order = result.rows[0] as { event_id: number; user_id: string } | undefined;
+
+      if (order) {
+        await client.query(
+          `
+            INSERT INTO audit_outbox (
+              event_id, user_id, action, created_at, next_attempt_at
+            ) VALUES ($1, $2, 'ticket_refunded', $3, $4)
+          `,
+          [order.event_id, order.user_id, now, now],
+        );
+      }
+
+      await client.query("COMMIT");
+      return Boolean(order);
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async #changeRsvp(
@@ -1384,6 +1411,7 @@ export class Store {
           audit_outbox.event_id,
           audit_outbox.user_id,
           audit_outbox.action,
+          audit_outbox.detail,
           events.title,
           events.guild_id,
           events.announcement_channel_id,
