@@ -187,6 +187,39 @@ export class TicketingService {
     return { refunded, failed };
   }
 
+  // Fully refunds every paid order of a cancelled event. Revocation and the
+  // member's refund DM arrive through the charge.refunded webhook.
+  async refundCancelledEventOrders(
+    event: EventRecord,
+    orders: { orderId: number; paymentIntentId: string | null }[],
+  ): Promise<{ refunded: number; failed: number }> {
+    const stripe = this.#stripeForEvent(event);
+    let refunded = 0;
+    let failed = 0;
+
+    for (const order of orders) {
+      if (!order.paymentIntentId) {
+        failed += 1;
+        console.warn(
+          `Ticket order ${order.orderId} has no payment intent; refund manually`,
+        );
+        continue;
+      }
+      try {
+        await stripe.refunds.create(
+          { payment_intent: order.paymentIntentId },
+          { idempotencyKey: `event-cancel-${order.orderId}` },
+        );
+        refunded += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(`Failed to refund cancelled order ${order.orderId}`, error);
+      }
+    }
+
+    return { refunded, failed };
+  }
+
   async handleWebhook(
     payload: Buffer,
     signature: string,

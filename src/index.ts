@@ -119,6 +119,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await eventController.handleModal(interaction);
     } else if (interaction.isButton()) {
       await eventController.handleButton(interaction);
+    } else if (interaction.isStringSelectMenu()) {
+      await eventController.handleSelect(interaction);
     }
   } catch (error) {
     console.error(`Failed to handle interaction ${interaction.id}`, error);

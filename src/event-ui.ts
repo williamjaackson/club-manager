@@ -426,6 +426,7 @@ export function buildAdmissionComponents(
   now = currentTimestamp(),
   attendance?: EventAttendance,
 ): ActionRowBuilder<ButtonBuilder>[] {
+  if (typeof event.cancelled_at === "number") return [];
   return [
     buildAdmissionRow(
       event,
@@ -620,6 +621,10 @@ export function buildEventAnnouncementText(
 
   if (typeof event.edited_at === "number") {
     text += `\n\n-# Edited <t:${event.edited_at}:R>`;
+  }
+
+  if (typeof event.cancelled_at === "number") {
+    text += `\n\n-# ❌ **This event was cancelled** <t:${event.cancelled_at}:R>`;
   }
 
   return withTestNote(event, text);

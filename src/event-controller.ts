@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
   ActionRowBuilder,
   type Attachment,
+  AttachmentBuilder,
   ButtonBuilder,
   type ButtonInteraction,
   ButtonStyle,
@@ -12,6 +13,7 @@ import {
   type ModalSubmitInteraction,
   type NewsChannel,
   PermissionFlagsBits,
+  type StringSelectMenuInteraction,
   type TextChannel,
   type Webhook,
   type WebhookType,
@@ -34,6 +36,16 @@ import {
   type Store,
   TicketSalesClosedError,
 } from "./database.js";
+import {
+  buildAttendeeList,
+  buildAttendeesCsv,
+  buildCancelConfirm,
+  buildDeleteConfirm,
+  buildEventList,
+  buildEventManageView,
+  EVENT_LIST_PAGE_SIZE,
+  eventAdminIds,
+} from "./event-admin-ui.js";
 import {
   buildAdmissionComponents,
   buildCancellationComplete,
@@ -112,10 +124,19 @@ export class EventController {
       return true;
     }
 
-    if (
-      interaction.commandName !== "event" ||
-      interaction.options.getSubcommand() !== "create"
-    ) {
+    if (interaction.commandName !== "event") return false;
+
+    if (interaction.options.getSubcommand() === "list") {
+      this.#requireAdministrator(interaction);
+      if (!interaction.guildId) {
+        throw new Error("Events can only be listed inside a server.");
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await this.#renderEventList(interaction, 0);
+      return true;
+    }
+
+    if (interaction.options.getSubcommand() !== "create") {
       return false;
     }
 
@@ -677,6 +698,159 @@ export class EventController {
     });
   }
 
+  async #handleAdminAction(
+    interaction: ButtonInteraction,
+    action: EventAdminAction,
+    value: number,
+  ): Promise<void> {
+    if (action === "page") {
+      await this.#renderEventList(interaction, value);
+      return;
+    }
+
+    const event = await this.#store.getEvent(value);
+    if (!event || event.guild_id !== interaction.guildId) {
+      await interaction.editReply({
+        content: "That event no longer exists.",
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+
+    switch (action) {
+      case "manage":
+        await this.#renderEventManage(interaction, event.id);
+        return;
+      case "attendees": {
+        const attendees = await this.#store.getEventAttendees(event.id);
+        await interaction.editReply(buildAttendeeList(event, attendees));
+        return;
+      }
+      case "csv": {
+        const attendees = await this.#store.getEventAttendees(event.id);
+        const csv = buildAttendeesCsv(event, attendees);
+        await interaction.editReply({
+          content: `📄 ${attendees.length} row${attendees.length === 1 ? "" : "s"} exported.`,
+          files: [
+            new AttachmentBuilder(Buffer.from(`${csv}\n`, "utf8"), {
+              name: `event-${event.id}-attendees.csv`,
+            }),
+          ],
+        });
+        return;
+      }
+      case "cancel": {
+        const preview = await this.#store.previewPriceDropRefunds(event.id, 0);
+        await interaction.editReply(
+          buildCancelConfirm(event, preview.count, preview.totalCents),
+        );
+        return;
+      }
+      case "cancel-confirm":
+        await this.#cancelEvent(interaction, event);
+        return;
+      case "delete": {
+        const attendance = await this.#store.getEventAttendance(event.id);
+        const hasPaidTickets = event.ticket_price_cents !== null && attendance.going > 0;
+        await interaction.editReply(
+          buildDeleteConfirm(event, attendance, hasPaidTickets),
+        );
+        return;
+      }
+      case "delete-confirm": {
+        const deleted = await this.#store.deleteEventCascade(event.id);
+        await interaction.editReply({
+          content: deleted
+            ? `🗑️ Deleted **${event.title}** and all of its records from the database.`
+            : "That event was already deleted.",
+          embeds: [],
+          components: [],
+        });
+        return;
+      }
+    }
+  }
+
+  async #renderEventList(
+    interaction: ButtonInteraction | ChatInputCommandInteraction,
+    offset: number,
+  ): Promise<void> {
+    if (!interaction.guildId) {
+      throw new Error("Events can only be listed inside a server.");
+    }
+    const { events, total } = await this.#store.listEvents(
+      interaction.guildId,
+      offset,
+      EVENT_LIST_PAGE_SIZE,
+    );
+    await interaction.editReply(buildEventList(events, total, offset));
+  }
+
+  async #renderEventManage(
+    interaction: ButtonInteraction | StringSelectMenuInteraction,
+    eventId: number,
+  ): Promise<void> {
+    const event = await this.#store.getEvent(eventId);
+    if (!event || event.guild_id !== interaction.guildId) {
+      await interaction.editReply({
+        content: "That event no longer exists.",
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+    const attendance = await this.#store.getEventAttendance(eventId);
+    await interaction.editReply(buildEventManageView(event, attendance));
+  }
+
+  async #cancelEvent(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
+    const cancelled = await this.#store.cancelEvent(event.id);
+    if (!cancelled) {
+      await interaction.editReply({
+        content: `**${event.title}** is already cancelled or not published.`,
+        embeds: [],
+        components: [],
+      });
+      return;
+    }
+
+    let refundSummary = "";
+    if (cancelled.refunds.length > 0) {
+      const { refunded, failed } = await this.#ticketing.refundCancelledEventOrders(
+        cancelled.event,
+        cancelled.refunds,
+      );
+      refundSummary = ` Started full refunds for ${refunded} ticket${
+        refunded === 1 ? "" : "s"
+      }.`;
+      if (failed > 0) {
+        refundSummary += ` ⚠️ ${failed} refund${
+          failed === 1 ? "" : "s"
+        } failed — handle them in the Stripe dashboard.`;
+      }
+    }
+    void this.#audit.flush();
+
+    const failedUpdates = await this.#refreshEventMessages(
+      interaction,
+      cancelled.event,
+    ).catch((error) => {
+      console.error("Failed to refresh cancelled event messages", error);
+      return 1;
+    });
+    await interaction.editReply({
+      content:
+        `❌ Cancelled **${event.title}**. Attendees are being notified by DM.` +
+        refundSummary +
+        (failedUpdates > 0
+          ? " Some existing messages could not be updated visually."
+          : ""),
+      embeds: [],
+      components: [],
+    });
+  }
+
   async #sendReminder(interaction: ChatInputCommandInteraction): Promise<void> {
     this.#requireAdministrator(interaction);
     if (!interaction.guildId) {
@@ -730,7 +904,25 @@ export class EventController {
     });
   }
 
+  async handleSelect(interaction: StringSelectMenuInteraction): Promise<boolean> {
+    if (interaction.customId !== eventAdminIds.select) return false;
+
+    this.#requireAdministrator(interaction);
+    await interaction.deferUpdate();
+    const eventId = Number(interaction.values[0]);
+    await this.#renderEventManage(interaction, eventId);
+    return true;
+  }
+
   async handleButton(interaction: ButtonInteraction): Promise<boolean> {
+    const admin = parseEventAdminButton(interaction.customId);
+    if (admin) {
+      this.#requireAdministrator(interaction);
+      await interaction.deferUpdate();
+      await this.#handleAdminAction(interaction, admin.action, admin.value);
+      return true;
+    }
+
     const wizard = parseEventWizardAction(interaction.customId);
     if (wizard) {
       this.#requireAdministrator(interaction);
@@ -995,7 +1187,8 @@ export class EventController {
       | ChatInputCommandInteraction
       | MessageContextMenuCommandInteraction
       | ModalSubmitInteraction
-      | ButtonInteraction,
+      | ButtonInteraction
+      | StringSelectMenuInteraction,
   ): void {
     if (
       !interaction.inGuild() ||
@@ -1147,6 +1340,29 @@ function parseEventButton(
   const eventId = Number(match[2]);
 
   return isEventButtonAction(action) ? { action, eventId } : undefined;
+}
+
+const eventAdminActions = [
+  "page",
+  "manage",
+  "attendees",
+  "csv",
+  "cancel",
+  "cancel-confirm",
+  "delete",
+  "delete-confirm",
+] as const;
+
+type EventAdminAction = (typeof eventAdminActions)[number];
+
+function parseEventAdminButton(
+  customId: string,
+): { action: EventAdminAction; value: number } | undefined {
+  const match = /^event-admin:([a-z-]+):(\d+)$/.exec(customId);
+  if (!match?.[1]) return undefined;
+  const action = match[1];
+  if (!(eventAdminActions as readonly string[]).includes(action)) return undefined;
+  return { action: action as EventAdminAction, value: Number(match[2]) };
 }
 
 type WizardButtonAction =

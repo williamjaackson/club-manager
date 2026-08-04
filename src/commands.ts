@@ -17,6 +17,11 @@ export const commandDefinitions = [
     .addSubcommand((subcommand) =>
       subcommand.setName("create").setDescription("Create a new event announcement"),
     )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("list")
+        .setDescription("List events, newest first, with management actions"),
+    )
     .toJSON(),
   new SlashCommandBuilder()
     .setName("config")
