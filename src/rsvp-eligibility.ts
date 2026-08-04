@@ -9,12 +9,6 @@ function roleId(name: string, fallback: string): string {
 }
 
 export const rsvpEligibility = {
-  connectedRoleId: roleId(
-    "STUDENT_CONNECTION_ROLE_ID",
-    "1257896371973914674",
-  ),
-  exemptRoleId: roleId(
-    "STUDENT_NUMBER_EXEMPT_ROLE_ID",
-    "1343246871723901071",
-  ),
+  connectedRoleId: roleId("STUDENT_CONNECTION_ROLE_ID", "1257896371973914674"),
+  exemptRoleId: roleId("STUDENT_NUMBER_EXEMPT_ROLE_ID", "1343246871723901071"),
 };

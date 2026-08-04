@@ -1,43 +1,42 @@
 import { randomBytes } from "node:crypto";
 import {
   ActionRowBuilder,
+  type Attachment,
   ButtonBuilder,
+  type ButtonInteraction,
   ButtonStyle,
   ChannelType,
-  MessageFlags,
-  PermissionFlagsBits,
-  WebhookType,
-  type Attachment,
-  type ButtonInteraction,
   type ChatInputCommandInteraction,
   type MessageContextMenuCommandInteraction,
+  MessageFlags,
   type ModalSubmitInteraction,
   type NewsChannel,
+  PermissionFlagsBits,
   type TextChannel,
   type Webhook,
+  type WebhookType,
 } from "discord.js";
 import type { AuditLogger } from "./audit.js";
-import { rsvpEligibility } from "./rsvp-eligibility.js";
 import {
   EventAdmissionClosedError,
   EventFinishedError,
-  EventUnavailableError,
-  TicketSalesClosedError,
   type EventRecord,
+  EventUnavailableError,
   type NewEventDraft,
   type NewPendingEventCreate,
   type PendingEventCreateRecord,
   type Store,
+  TicketSalesClosedError,
 } from "./database.js";
 import {
   buildCancellationComplete,
+  buildClosedAdmissionComponents,
   buildCreateEventAdmissionModal,
   buildCreateEventDetailsModal,
   buildCreateEventScheduleModal,
-  buildClosedAdmissionComponents,
   buildCurrentRsvp,
-  buildEventPreview,
   buildEventAnnouncementText,
+  buildEventPreview,
   buildEventWizardContinue,
   buildPublicEventMessage,
   buildReminderMessage,
@@ -47,30 +46,22 @@ import {
   buildTicketConfirmed,
   eventIds,
 } from "./event-ui.js";
+import { rsvpEligibility } from "./rsvp-eligibility.js";
 import type { TicketingService } from "./ticketing.js";
 
 export class EventController {
   readonly #store: Store;
   readonly #audit: AuditLogger;
   readonly #ticketing: TicketingService;
-  readonly #webhookLookups = new Map<
-    string,
-    Promise<Webhook<WebhookType.Incoming>>
-  >();
+  readonly #webhookLookups = new Map<string, Promise<Webhook<WebhookType.Incoming>>>();
 
-  constructor(
-    store: Store,
-    audit: AuditLogger,
-    ticketing: TicketingService,
-  ) {
+  constructor(store: Store, audit: AuditLogger, ticketing: TicketingService) {
     this.#store = store;
     this.#audit = audit;
     this.#ticketing = ticketing;
   }
 
-  async handleCommand(
-    interaction: ChatInputCommandInteraction,
-  ): Promise<boolean> {
+  async handleCommand(interaction: ChatInputCommandInteraction): Promise<boolean> {
     if (interaction.commandName === "ping") {
       await interaction.reply({
         content: `Pong! ${interaction.client.ws.ping}ms`,
@@ -128,7 +119,7 @@ export class EventController {
       interaction.guildId,
       interaction.targetMessage.id,
     );
-    if (!event || event.status !== "published" || !event.message_id) {
+    if (event?.status !== "published" || !event.message_id) {
       throw new Error("Use Close Event on an event announcement or reminder.");
     }
 
@@ -174,21 +165,21 @@ export class EventController {
     const updates: Promise<unknown>[] = [];
     if (event.message_id) {
       updates.push(
-        this.#getOrCreateEventWebhook(channel, interaction.client.user.id)
-          .then((webhook) =>
+        this.#getOrCreateEventWebhook(channel, interaction.client.user.id).then(
+          (webhook) =>
             webhook.editMessage(event.message_id!, {
               content: buildEventAnnouncementText(event),
               components,
             }),
-          ),
+        ),
       );
     }
     const reminderIds = await this.#store.getEventReminderMessageIds(event.id);
     for (const reminderId of reminderIds) {
       updates.push(
-        channel.messages.fetch(reminderId).then((message) =>
-          message.edit({ components }),
-        ),
+        channel.messages
+          .fetch(reminderId)
+          .then((message) => message.edit({ components })),
       );
     }
 
@@ -229,11 +220,10 @@ export class EventController {
     token: string,
   ): Promise<void> {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const channels = interaction.fields.getSelectedChannels(
-      eventIds.channel,
-      true,
-      [ChannelType.GuildText, ChannelType.GuildAnnouncement],
-    );
+    const channels = interaction.fields.getSelectedChannels(eventIds.channel, true, [
+      ChannelType.GuildText,
+      ChannelType.GuildAnnouncement,
+    ]);
     const channel = channels.first();
     if (!channel?.isSendable()) {
       throw new Error("Select a text channel where the bot can send messages.");
@@ -249,9 +239,7 @@ export class EventController {
         announcementChannelId: channel.id,
         title: interaction.fields.getTextInputValue(eventIds.title).trim(),
         location: interaction.fields.getTextInputValue(eventIds.location).trim(),
-        announcement: interaction.fields
-          .getTextInputValue(eventIds.announcement)
-          .trim(),
+        announcement: interaction.fields.getTextInputValue(eventIds.announcement).trim(),
         ...(artwork
           ? {
               artworkUrl: artwork.url,
@@ -292,10 +280,7 @@ export class EventController {
     if (endsAt !== undefined && endsAt <= currentTimestamp()) {
       throw new Error("Finish time must be in the future.");
     }
-    if (
-      ticketSalesCloseAt !== undefined &&
-      ticketSalesCloseAt <= currentTimestamp()
-    ) {
+    if (ticketSalesCloseAt !== undefined && ticketSalesCloseAt <= currentTimestamp()) {
       throw new Error("Ticket sales close must be in the future.");
     }
     if (
@@ -373,10 +358,7 @@ export class EventController {
       announcementChannelId: pending.announcement_channel_id,
       creatorId: interaction.user.id,
       title: pending.title,
-      scheduleText: formatScheduleText(
-        pending.starts_at,
-        pending.ends_at ?? undefined,
-      ),
+      scheduleText: formatScheduleText(pending.starts_at, pending.ends_at ?? undefined),
       location: pending.location,
       announcement: pending.announcement,
       startsAt: pending.starts_at,
@@ -418,9 +400,7 @@ export class EventController {
     });
   }
 
-  async #sendReminder(
-    interaction: ChatInputCommandInteraction,
-  ): Promise<void> {
+  async #sendReminder(interaction: ChatInputCommandInteraction): Promise<void> {
     this.#requireAdministrator(interaction);
     if (!interaction.guildId) {
       throw new Error("Reminders can only be sent inside a server.");
@@ -443,8 +423,7 @@ export class EventController {
       link.messageId,
     );
     if (
-      !event ||
-      event.status !== "published" ||
+      event?.status !== "published" ||
       event.announcement_channel_id !== link.channelId
     ) {
       throw new Error("That link is not a published event announcement.");
@@ -459,12 +438,7 @@ export class EventController {
     }
 
     const announcement = await channel.messages.fetch(link.messageId);
-    const reminder = await announcement.reply(
-      buildReminderMessage(
-        event,
-        reminderText,
-      ),
-    );
+    const reminder = await announcement.reply(buildReminderMessage(event, reminderText));
 
     try {
       await this.#store.recordEventReminder(event.id, reminder.id);
@@ -551,10 +525,7 @@ export class EventController {
     }
   }
 
-  async #publish(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
+  async #publish(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     this.#requireAdministrator(interaction);
 
     if (!(await this.#store.claimEventForPublishing(event.id))) {
@@ -566,7 +537,7 @@ export class EventController {
       return;
     }
 
-    let message;
+    let message: Awaited<ReturnType<Webhook<WebhookType.Incoming>["send"]>> | undefined;
     let webhook: Webhook<WebhookType.Incoming> | undefined;
 
     try {
@@ -581,10 +552,7 @@ export class EventController {
         throw new Error("The announcement channel is unavailable.");
       }
 
-      webhook = await this.#getOrCreateEventWebhook(
-        channel,
-        interaction.client.user.id,
-      );
+      webhook = await this.#getOrCreateEventWebhook(channel, interaction.client.user.id);
       const identity = commandRunnerIdentity(interaction);
       message = await webhook.send({
         ...buildPublicEventMessage(event),
@@ -660,10 +628,7 @@ export class EventController {
     });
   }
 
-  async #discard(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
+  async #discard(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     this.#requireAdministrator(interaction);
     const discarded = await this.#store.discardEventDraft(event.id);
 
@@ -677,10 +642,7 @@ export class EventController {
     });
   }
 
-  async #showRsvp(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
+  async #showRsvp(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     this.#requirePublished(event);
     this.#requireFreeEvent(event);
     await this.#requireAdmissionMessage(interaction, event);
@@ -692,22 +654,14 @@ export class EventController {
       return;
     }
 
-    const status = await this.#store.getRsvpStatus(
-      event.id,
-      interaction.user.id,
-    );
+    const status = await this.#store.getRsvpStatus(event.id, interaction.user.id);
 
     await interaction.editReply(
-      status === "active"
-        ? buildCurrentRsvp(event)
-        : buildRsvpPrompt(event),
+      status === "active" ? buildCurrentRsvp(event) : buildRsvpPrompt(event),
     );
   }
 
-  async #confirmRsvp(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
+  async #confirmRsvp(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     this.#requireFreeEvent(event);
     this.#requireRsvpOpen(event);
 
@@ -716,10 +670,7 @@ export class EventController {
       return;
     }
 
-    const result = await this.#store.confirmRsvp(
-      event.id,
-      interaction.user.id,
-    );
+    const result = await this.#store.confirmRsvp(event.id, interaction.user.id);
     await interaction.editReply(buildRsvpComplete(event, result.changed));
     void this.#audit.flush();
   }
@@ -730,10 +681,7 @@ export class EventController {
     }
   }
 
-  async #buyTicket(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
+  async #buyTicket(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
     this.#requirePublished(event);
     await this.#requireAdmissionMessage(interaction, event);
     await this.#recordInterest(event, interaction.user.id, "ticket");
@@ -748,10 +696,7 @@ export class EventController {
       throw new Error("This event does not have paid tickets.");
     }
 
-    const checkout = await this.#ticketing.startCheckout(
-      event,
-      interaction.user.id,
-    );
+    const checkout = await this.#ticketing.startCheckout(event, interaction.user.id);
     await interaction.editReply(
       checkout.alreadyPaid
         ? buildTicketConfirmed(event)
@@ -759,17 +704,9 @@ export class EventController {
     );
   }
 
-  async #cancelRsvp(
-    interaction: ButtonInteraction,
-    event: EventRecord,
-  ): Promise<void> {
-    const result = await this.#store.cancelRsvp(
-      event.id,
-      interaction.user.id,
-    );
-    await interaction.editReply(
-      buildCancellationComplete(event, result.changed),
-    );
+  async #cancelRsvp(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
+    const result = await this.#store.cancelRsvp(event.id, interaction.user.id);
+    await interaction.editReply(buildCancellationComplete(event, result.changed));
     void this.#audit.flush();
   }
 
@@ -799,12 +736,7 @@ export class EventController {
     event: EventRecord,
   ): Promise<void> {
     if (interaction.message.id === event.message_id) return;
-    if (
-      !(await this.#store.isEventAdmissionMessage(
-        event.id,
-        interaction.message.id,
-      ))
-    ) {
+    if (!(await this.#store.isEventAdmissionMessage(event.id, interaction.message.id))) {
       throw new Error("Use a ticket or RSVP button posted by Club Manager.");
     }
   }
@@ -935,9 +867,9 @@ function parseEventButton(
   return actions.includes(action) ? { action, eventId } : undefined;
 }
 
-function parseEventWizardStep(customId: string):
-  | { step: "details" | "schedule" | "admission"; token: string }
-  | undefined {
+function parseEventWizardStep(
+  customId: string,
+): { step: "details" | "schedule" | "admission"; token: string } | undefined {
   const match = /^event:create:(details|schedule|admission):([a-f0-9]{32})$/.exec(
     customId,
   );
@@ -957,8 +889,7 @@ function safeAttachmentName(name: string): string {
 }
 
 function parseBrisbaneDateTime(value: string, optionName: string): number {
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/.exec(value.trim());
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})$/.exec(value.trim());
   if (!match) {
     throw new Error(`${optionName} must use YYYY-MM-DD HH:mm Brisbane time.`);
   }
@@ -981,16 +912,12 @@ function parseBrisbaneDateTime(value: string, optionName: string): number {
   }
 
   return Math.floor(
-    Date.parse(
-      `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+10:00`,
-    ) / 1000,
+    Date.parse(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00+10:00`) /
+      1000,
   );
 }
 
-function optionalBrisbaneDateTime(
-  value: string,
-  fieldName: string,
-): number | undefined {
+function optionalBrisbaneDateTime(value: string, fieldName: string): number | undefined {
   return value.trim() ? parseBrisbaneDateTime(value, fieldName) : undefined;
 }
 
@@ -1006,9 +933,9 @@ function formatScheduleText(startsAt: number, endsAt?: number): string {
     : `${start} – ${formatter.format(new Date(endsAt * 1000))} (Brisbane)`;
 }
 
-function parseAnnouncementLink(value: string):
-  | { guildId: string; channelId: string; messageId: string }
-  | undefined {
+function parseAnnouncementLink(
+  value: string,
+): { guildId: string; channelId: string; messageId: string } | undefined {
   const match =
     /^https:\/\/(?:(?:www|canary|ptb)\.)?discord(?:app)?\.com\/channels\/(\d{17,20})\/(\d{17,20})\/(\d{17,20})\/?$/.exec(
       value.trim(),

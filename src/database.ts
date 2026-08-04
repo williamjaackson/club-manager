@@ -1,17 +1,9 @@
-import {
-  Pool,
-  neonConfig,
-  type PoolClient,
-} from "@neondatabase/serverless";
+import { neonConfig, Pool, type PoolClient } from "@neondatabase/serverless";
 import ws from "ws";
 
 neonConfig.webSocketConstructor = ws;
 
-export type EventStatus =
-  | "draft"
-  | "publishing"
-  | "published"
-  | "discarded";
+export type EventStatus = "draft" | "publishing" | "published" | "discarded";
 export type RsvpStatus = "active" | "cancelled";
 export type AuditAction =
   | "interest_rsvp"
@@ -413,9 +405,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
   }
 }
 
-export async function initializeDatabase(
-  connectionString: string,
-): Promise<void> {
+export async function initializeDatabase(connectionString: string): Promise<void> {
   const pool = createDatabasePool(directDatabaseUrl(connectionString));
 
   try {
@@ -541,10 +531,7 @@ export class Store {
     return result.rows.map((row) => (row as { message_id: string }).message_id);
   }
 
-  async closeEventAdmission(
-    eventId: number,
-    now = currentTimestamp(),
-  ): Promise<boolean> {
+  async closeEventAdmission(eventId: number, now = currentTimestamp()): Promise<boolean> {
     const result = await this.#pool.query(
       `
         UPDATE events
@@ -577,10 +564,7 @@ export class Store {
     );
   }
 
-  async isEventAdmissionMessage(
-    eventId: number,
-    messageId: string,
-  ): Promise<boolean> {
+  async isEventAdmissionMessage(eventId: number, messageId: string): Promise<boolean> {
     const result = await this.#pool.query(
       `
         SELECT 1 FROM events WHERE id = $1 AND message_id = $2
@@ -603,10 +587,9 @@ export class Store {
 
     try {
       await client.query("BEGIN");
-      const event = await client.query(
-        "SELECT id FROM events WHERE id = $1 FOR UPDATE",
-        [eventId],
-      );
+      const event = await client.query("SELECT id FROM events WHERE id = $1 FOR UPDATE", [
+        eventId,
+      ]);
       if (event.rows.length === 0) {
         throw new Error("Event does not exist.");
       }
@@ -659,10 +642,9 @@ export class Store {
     now = currentTimestamp(),
     lifetimeSeconds = 15 * 60,
   ): Promise<void> {
-    await this.#pool.query(
-      "DELETE FROM pending_event_creates WHERE expires_at <= $1",
-      [now],
-    );
+    await this.#pool.query("DELETE FROM pending_event_creates WHERE expires_at <= $1", [
+      now,
+    ]);
     await this.#pool.query(
       `
         INSERT INTO pending_event_creates (
@@ -797,10 +779,7 @@ export class Store {
   }
 
   async deletePendingEventCreate(token: string): Promise<void> {
-    await this.#pool.query(
-      "DELETE FROM pending_event_creates WHERE token = $1",
-      [token],
-    );
+    await this.#pool.query("DELETE FROM pending_event_creates WHERE token = $1", [token]);
   }
 
   async consumePendingEventCreate(
@@ -878,10 +857,7 @@ export class Store {
     return result.rowCount === 1;
   }
 
-  async getRsvpStatus(
-    eventId: number,
-    userId: string,
-  ): Promise<RsvpStatus | undefined> {
+  async getRsvpStatus(eventId: number, userId: string): Promise<RsvpStatus | undefined> {
     return this.#getRsvpStatus(this.#pool, eventId, userId);
   }
 
@@ -901,13 +877,10 @@ export class Store {
     return this.#changeRsvp(eventId, userId, "cancelled", "cancel", now);
   }
 
-  async getTicketOrder(
-    id: number,
-  ): Promise<TicketOrderRecord | undefined> {
-    const result = await this.#pool.query(
-      "SELECT * FROM ticket_orders WHERE id = $1",
-      [id],
-    );
+  async getTicketOrder(id: number): Promise<TicketOrderRecord | undefined> {
+    const result = await this.#pool.query("SELECT * FROM ticket_orders WHERE id = $1", [
+      id,
+    ]);
     return result.rows[0] as TicketOrderRecord | undefined;
   }
 
@@ -950,8 +923,7 @@ export class Store {
       const event = await this.#getEvent(client, eventId, true);
 
       if (
-        !event ||
-        event.status !== "published" ||
+        event?.status !== "published" ||
         !event.ticket_price_cents ||
         !event.ticket_currency
       ) {
@@ -960,8 +932,7 @@ export class Store {
 
       if (
         (event.ends_at !== null && event.ends_at <= now) ||
-        (event.ticket_sales_close_at !== null &&
-          event.ticket_sales_close_at <= now)
+        (event.ticket_sales_close_at !== null && event.ticket_sales_close_at <= now)
       ) {
         throw new TicketSalesClosedError();
       }
@@ -975,19 +946,14 @@ export class Store {
         `,
         [eventId, userId],
       );
-      const existing = existingResult.rows[0] as
-        | TicketOrderRecord
-        | undefined;
+      const existing = existingResult.rows[0] as TicketOrderRecord | undefined;
 
       if (existing?.status === "paid") {
         await client.query("COMMIT");
         return { order: existing, alreadyPaid: true };
       }
 
-      if (
-        existing?.status === "pending" &&
-        existing.reservation_expires_at > now
-      ) {
+      if (existing?.status === "pending" && existing.reservation_expires_at > now) {
         await client.query("COMMIT");
         return { order: existing, alreadyPaid: false };
       }
@@ -1005,9 +971,7 @@ export class Store {
         `,
         [eventId, now],
       );
-      const reservedCount = Number(
-        (capacityResult.rows[0] as { count: number }).count,
-      );
+      const reservedCount = Number((capacityResult.rows[0] as { count: number }).count);
 
       if (event.ticket_limit !== null && reservedCount >= event.ticket_limit) {
         throw new TicketSoldOutError();
@@ -1015,7 +979,7 @@ export class Store {
 
       const checkoutExpiresAt = now + checkoutLifetimeSeconds;
       const reservationExpiresAt = checkoutExpiresAt + webhookGraceSeconds;
-      let orderResult;
+      let orderResult: { rows: unknown[] };
 
       if (existing) {
         orderResult = await client.query(
@@ -1057,14 +1021,7 @@ export class Store {
             ) VALUES ($1, $2, 'pending', $3, $4, $5, $6)
             RETURNING *
           `,
-          [
-            eventId,
-            userId,
-            now,
-            now,
-            checkoutExpiresAt,
-            reservationExpiresAt,
-          ],
+          [eventId, userId, now, now, checkoutExpiresAt, reservationExpiresAt],
         );
       }
 
@@ -1155,10 +1112,7 @@ export class Store {
         return false;
       }
 
-      if (
-        order.checkout_session_id &&
-        order.checkout_session_id !== checkoutSessionId
-      ) {
+      if (order.checkout_session_id && order.checkout_session_id !== checkoutSessionId) {
         throw new Error("Checkout Session does not match this ticket order.");
       }
 
@@ -1258,14 +1212,10 @@ export class Store {
       // idempotency when Discord retries the same interaction concurrently.
       const event = await this.#getEvent(client, eventId, true);
 
-      if (!event || event.status !== "published") {
+      if (event?.status !== "published") {
         throw new EventUnavailableError();
       }
-      if (
-        status === "active" &&
-        event.ends_at !== null &&
-        event.ends_at <= now
-      ) {
+      if (status === "active" && event.ends_at !== null && event.ends_at <= now) {
         throw new EventFinishedError();
       }
       if (
@@ -1279,16 +1229,9 @@ export class Store {
         throw new EventUnavailableError();
       }
 
-      const currentStatus = await this.#getRsvpStatus(
-        client,
-        eventId,
-        userId,
-      );
+      const currentStatus = await this.#getRsvpStatus(client, eventId, userId);
 
-      if (
-        currentStatus === status ||
-        (status === "cancelled" && !currentStatus)
-      ) {
+      if (currentStatus === status || (status === "cancelled" && !currentStatus)) {
         await client.query("COMMIT");
         return { changed: false, status };
       }
@@ -1302,9 +1245,7 @@ export class Store {
           `,
           [eventId],
         );
-        const activeCount = Number(
-          (capacityResult.rows[0] as { count: number }).count,
-        );
+        const activeCount = Number((capacityResult.rows[0] as { count: number }).count);
         if (activeCount >= event.ticket_limit) {
           throw new RsvpCapacityReachedError();
         }
@@ -1378,10 +1319,7 @@ export class Store {
     return result.rows as AuditOutboxRecord[];
   }
 
-  async markAuditSent(
-    id: number,
-    now = currentTimestamp(),
-  ): Promise<void> {
+  async markAuditSent(id: number, now = currentTimestamp()): Promise<void> {
     await this.#pool.query(
       `
         UPDATE audit_outbox
@@ -1402,8 +1340,9 @@ export class Store {
       [id],
     );
     const attempts =
-      Number((current.rows[0] as { attempt_count: number } | undefined)
-        ?.attempt_count ?? 0) + 1;
+      Number(
+        (current.rows[0] as { attempt_count: number } | undefined)?.attempt_count ?? 0,
+      ) + 1;
     const delay = Math.min(300, 5 * 2 ** Math.min(attempts - 1, 6));
 
     if (attempts >= MAX_AUDIT_ATTEMPTS) {

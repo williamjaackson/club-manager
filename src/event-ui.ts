@@ -12,10 +12,10 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
-  TextInputStyle,
   type InteractionEditReplyOptions,
   type InteractionReplyOptions,
   type MessageCreateOptions,
+  TextInputStyle,
 } from "discord.js";
 import type { EventRecord } from "./database.js";
 
@@ -143,9 +143,7 @@ export function buildCreateEventAdmissionModal(token: string): ModalBuilder {
     .setPlaceholder("Leave blank for unlimited")
     .setMaxLength(6)
     .setRequired(false);
-  const testMode = new CheckboxBuilder()
-    .setCustomId(eventIds.testMode)
-    .setDefault(false);
+  const testMode = new CheckboxBuilder().setCustomId(eventIds.testMode).setDefault(false);
 
   return new ModalBuilder()
     .setCustomId(`event:create:admission:${token}`)
@@ -180,15 +178,11 @@ export function buildEventWizardContinue(
         ? "✅ Event details saved. Continue to add the schedule."
         : "✅ Schedule saved. Continue to configure RSVPs or paid tickets.",
     embeds: [],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(button),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(button)],
   };
 }
 
-export function buildEventPreview(
-  event: EventRecord,
-): InteractionEditReplyOptions {
+export function buildEventPreview(event: EventRecord): InteractionEditReplyOptions {
   const publish = new ButtonBuilder()
     .setCustomId(`event:publish:${event.id}`)
     .setLabel("Publish")
@@ -200,9 +194,7 @@ export function buildEventPreview(
   const files: AttachmentBuilder[] = [];
 
   if (event.artwork_url && event.artwork_name) {
-    files.push(
-      new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }),
-    );
+    files.push(new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }));
   }
 
   return {
@@ -211,22 +203,16 @@ export function buildEventPreview(
       `<#${event.announcement_channel_id}>.\n\n` +
       buildEventAnnouncementText(event),
     embeds: [],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(publish, discard),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(publish, discard)],
     files,
   };
 }
 
-export function buildPublicEventMessage(
-  event: EventRecord,
-): MessageCreateOptions {
+export function buildPublicEventMessage(event: EventRecord): MessageCreateOptions {
   const files: AttachmentBuilder[] = [];
 
   if (event.artwork_url && event.artwork_name) {
-    files.push(
-      new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }),
-    );
+    files.push(new AttachmentBuilder(event.artwork_url, { name: event.artwork_name }));
   }
 
   return {
@@ -258,21 +244,22 @@ function buildAdmissionRow(
   event: EventRecord,
   disabled = false,
 ): ActionRowBuilder<ButtonBuilder> {
-  const admission = event.ticket_price_cents && event.ticket_currency
-    ? new ButtonBuilder()
-        .setCustomId(`event:buy:${event.id}`)
-        .setLabel(
-          event.test_mode
-            ? `Test checkout — ${formatTicketPrice(event)}`
-            : `Buy ticket — ${formatTicketPrice(event)}`,
-        )
-        .setEmoji("💳")
-        .setStyle(ButtonStyle.Success)
-    : new ButtonBuilder()
-        .setCustomId(`event:rsvp:${event.id}`)
-        .setLabel("RSVP")
-        .setEmoji("🎟️")
-        .setStyle(ButtonStyle.Secondary);
+  const admission =
+    event.ticket_price_cents && event.ticket_currency
+      ? new ButtonBuilder()
+          .setCustomId(`event:buy:${event.id}`)
+          .setLabel(
+            event.test_mode
+              ? `Test checkout — ${formatTicketPrice(event)}`
+              : `Buy ticket — ${formatTicketPrice(event)}`,
+          )
+          .setEmoji("💳")
+          .setStyle(ButtonStyle.Success)
+      : new ButtonBuilder()
+          .setCustomId(`event:rsvp:${event.id}`)
+          .setLabel("RSVP")
+          .setEmoji("🎟️")
+          .setStyle(ButtonStyle.Secondary);
   admission.setDisabled(disabled);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(admission);
 }
@@ -293,9 +280,7 @@ export function buildRsvpPrompt(event: EventRecord): EventReplyOptions {
       "No payment is required to RSVP.",
     ),
     embeds: [],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(confirm, notNow),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(confirm, notNow)],
   };
 }
 
@@ -311,20 +296,16 @@ export function buildCurrentRsvp(event: EventRecord): EventReplyOptions {
       "You can cancel your RSVP below.",
     ),
     embeds: [],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(cancel),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(cancel)],
   };
 }
 
 export function buildRsvpComplete(
-  event: EventRecord,
+  _event: EventRecord,
   changed: boolean,
 ): EventReplyOptions {
   return {
-    content: changed
-      ? "✅ RSVP confirmed."
-      : "✅ You’re already RSVP’d.",
+    content: changed ? "✅ RSVP confirmed." : "✅ You’re already RSVP’d.",
     embeds: [],
     components: [],
   };
@@ -335,9 +316,7 @@ export function buildTicketCheckout(
   checkoutUrl: string,
 ): EventReplyOptions {
   const checkout = new ButtonBuilder()
-    .setLabel(
-      event.test_mode ? "Open Stripe test checkout" : "Open secure checkout",
-    )
+    .setLabel(event.test_mode ? "Open Stripe test checkout" : "Open secure checkout")
     .setURL(checkoutUrl)
     .setStyle(ButtonStyle.Link);
   return {
@@ -348,31 +327,26 @@ export function buildTicketCheckout(
         ? "🧪 Test mode: use a Stripe test card. No real money will be charged."
         : "Stripe will collect payment and email your receipt."),
     embeds: [],
-    components: [
-      new ActionRowBuilder<ButtonBuilder>().addComponents(checkout),
-    ],
+    components: [new ActionRowBuilder<ButtonBuilder>().addComponents(checkout)],
   };
 }
 
 export function buildTicketConfirmed(event: EventRecord): EventReplyOptions {
   return {
-    content:
-      (event.test_mode
-        ? `✅ Your test ticket for **${event.title}** is confirmed. No real payment was made.`
-        : `✅ Your paid ticket for **${event.title}** is confirmed. Stripe has emailed your receipt.`),
+    content: event.test_mode
+      ? `✅ Your test ticket for **${event.title}** is confirmed. No real payment was made.`
+      : `✅ Your paid ticket for **${event.title}** is confirmed. Stripe has emailed your receipt.`,
     embeds: [],
     components: [],
   };
 }
 
 export function buildCancellationComplete(
-  event: EventRecord,
+  _event: EventRecord,
   changed: boolean,
 ): EventReplyOptions {
   return {
-    content: changed
-      ? "Your RSVP has been cancelled."
-      : "You don’t have an active RSVP.",
+    content: changed ? "Your RSVP has been cancelled." : "You don’t have an active RSVP.",
     embeds: [],
     components: [],
   };
@@ -408,7 +382,8 @@ export function buildEventAnnouncementText(event: EventRecord): string {
     }
     const rsvpClose = event.ticket_sales_close_at ?? event.ends_at;
     if (typeof rsvpClose === "number") {
-      text += `\n${typeof event.ticket_limit === "number" ? "" : "\n"}` +
+      text +=
+        `\n${typeof event.ticket_limit === "number" ? "" : "\n"}` +
         `⏳ **RSVPs close:** <t:${rsvpClose}:F> (<t:${rsvpClose}:R>)`;
     }
   }
@@ -430,18 +405,14 @@ function buildCompactRsvpText(
   } else {
     schedule = `📅 **${event.schedule_text}**\n`;
   }
-  return (
-    `**${heading}**\n\n` +
-    schedule +
-    `📍 **${event.location}**\n\n` +
-    message
-  );
+  return `**${heading}**\n\n${schedule}📍 **${event.location}**\n\n${message}`;
 }
 
 function admissionClosed(event: EventRecord, now: number): boolean {
   if (typeof event.ends_at === "number" && event.ends_at <= now) return true;
-  return typeof event.ticket_sales_close_at === "number" &&
-    event.ticket_sales_close_at <= now;
+  return (
+    typeof event.ticket_sales_close_at === "number" && event.ticket_sales_close_at <= now
+  );
 }
 
 function formatTicketPrice(event: EventRecord): string {

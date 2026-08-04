@@ -7,7 +7,11 @@ test("creates a paid multi-day test event through the persistent wizard", async 
   const guildId = "12345678901234567";
   const channelId = "22345678901234567";
   const userId = "32345678901234567";
-  const administrator = { has() { return true; } };
+  const administrator = {
+    has() {
+      return true;
+    },
+  };
   let pending;
   let createdDraft;
   let modal;
@@ -29,7 +33,9 @@ test("creates a paid multi-day test event through the persistent wizard", async 
         ticket_sales_close_at: null,
       };
     },
-    async getPendingEventCreate() { return pending; },
+    async getPendingEventCreate() {
+      return pending;
+    },
     async updatePendingEventDetails(token, owner, guild, details) {
       assert.deepEqual([token, owner, guild], [pending.token, userId, guildId]);
       Object.assign(pending, {
@@ -88,14 +94,22 @@ test("creates a paid multi-day test event through the persistent wizard", async 
     guildId,
     user: { id: userId },
     memberPermissions: administrator,
-    inGuild() { return true; },
+    inGuild() {
+      return true;
+    },
   };
 
   await controller.handleCommand({
     ...baseInteraction,
     commandName: "event",
-    options: { getSubcommand() { return "create"; } },
-    async showModal(value) { modal = value.toJSON(); },
+    options: {
+      getSubcommand() {
+        return "create";
+      },
+    },
+    async showModal(value) {
+      modal = value.toJSON();
+    },
   });
   assert.match(modal.custom_id, /^event:create:details:/);
 
@@ -114,20 +128,43 @@ test("creates a paid multi-day test event through the persistent wizard", async 
     customId: modal.custom_id,
     fields: {
       getSelectedChannels() {
-        return { first() { return { id: channelId, isSendable() { return true; } }; } };
+        return {
+          first() {
+            return {
+              id: channelId,
+              isSendable() {
+                return true;
+              },
+            };
+          },
+        };
       },
-      getUploadedFiles() { return { first() { return artwork; } }; },
-      getTextInputValue(id) { return details[id]; },
+      getUploadedFiles() {
+        return {
+          first() {
+            return artwork;
+          },
+        };
+      },
+      getTextInputValue(id) {
+        return details[id];
+      },
     },
-    async deferReply(options) { assert.equal(options.flags, MessageFlags.Ephemeral); },
-    async editReply(options) { response = options; },
+    async deferReply(options) {
+      assert.equal(options.flags, MessageFlags.Ephemeral);
+    },
+    async editReply(options) {
+      response = options;
+    },
   });
 
   const scheduleButton = response.components[0].components[0].toJSON().custom_id;
   await controller.handleButton({
     ...baseInteraction,
     customId: scheduleButton,
-    async showModal(value) { modal = value.toJSON(); },
+    async showModal(value) {
+      modal = value.toJSON();
+    },
   });
   const schedule = {
     "event-starts-at": "2099-08-08 10:00",
@@ -137,16 +174,24 @@ test("creates a paid multi-day test event through the persistent wizard", async 
   await controller.handleModal({
     ...baseInteraction,
     customId: modal.custom_id,
-    fields: { getTextInputValue(id) { return schedule[id]; } },
+    fields: {
+      getTextInputValue(id) {
+        return schedule[id];
+      },
+    },
     async deferReply() {},
-    async editReply(options) { response = options; },
+    async editReply(options) {
+      response = options;
+    },
   });
 
   const admissionButton = response.components[0].components[0].toJSON().custom_id;
   await controller.handleButton({
     ...baseInteraction,
     customId: admissionButton,
-    async showModal(value) { modal = value.toJSON(); },
+    async showModal(value) {
+      modal = value.toJSON();
+    },
   });
   await controller.handleModal({
     ...baseInteraction,
@@ -155,10 +200,14 @@ test("creates a paid multi-day test event through the persistent wizard", async 
       getTextInputValue(id) {
         return id === "event-ticket-price" ? "12.50" : "50";
       },
-      getCheckbox() { return true; },
+      getCheckbox() {
+        return true;
+      },
     },
     async deferReply() {},
-    async editReply(options) { response = options; },
+    async editReply(options) {
+      response = options;
+    },
   });
 
   assert.equal(pending, undefined);
@@ -187,24 +236,36 @@ test("replies to an event announcement with a reusable admission button", async 
   let confirmation;
   const reminder = {
     id: "42345678901234567",
-    async delete() { assert.fail("successful reminders must not be deleted"); },
+    async delete() {
+      assert.fail("successful reminders must not be deleted");
+    },
   };
-  const controller = new EventController({
-    async getEventByMessageId(guildId, messageId) {
-      assert.equal(guildId, event.guild_id);
-      assert.equal(messageId, event.message_id);
-      return event;
+  const controller = new EventController(
+    {
+      async getEventByMessageId(guildId, messageId) {
+        assert.equal(guildId, event.guild_id);
+        assert.equal(messageId, event.message_id);
+        return event;
+      },
+      async recordEventReminder(eventId, messageId) {
+        recorded = { eventId, messageId };
+      },
     },
-    async recordEventReminder(eventId, messageId) {
-      recorded = { eventId, messageId };
-    },
-  }, {}, {});
+    {},
+    {},
+  );
 
   await controller.handleCommand({
     commandName: "reminder",
     guildId: event.guild_id,
-    memberPermissions: { has() { return true; } },
-    inGuild() { return true; },
+    memberPermissions: {
+      has() {
+        return true;
+      },
+    },
+    inGuild() {
+      return true;
+    },
     options: {
       getString(name) {
         if (name === "announcement") {
@@ -237,7 +298,9 @@ test("replies to an event announcement with a reusable admission button", async 
     async deferReply(options) {
       assert.equal(options.flags, MessageFlags.Ephemeral);
     },
-    async editReply(options) { confirmation = options; },
+    async editReply(options) {
+      confirmation = options;
+    },
   });
 
   assert.equal(replyOptions.content, "@everyone Reminder this Saturday");
@@ -285,7 +348,9 @@ test("closes an event from its message context menu and disables its buttons", a
     name: "Club Manager Event Announcements",
     owner: { id: "52345678901234567" },
     token: "webhook-token",
-    isIncoming() { return true; },
+    isIncoming() {
+      return true;
+    },
     async editMessage(messageId, options) {
       assert.equal(messageId, event.message_id);
       originalUpdate = options;
@@ -294,50 +359,74 @@ test("closes an event from its message context menu and disables its buttons", a
   const channel = {
     type: ChannelType.GuildText,
     async fetchWebhooks() {
-      return { find(predicate) { return predicate(webhook) ? webhook : undefined; } };
+      return {
+        find(predicate) {
+          return predicate(webhook) ? webhook : undefined;
+        },
+      };
     },
     messages: {
       async fetch(messageId) {
         assert.equal(messageId, "62345678901234567");
-        return { async edit(options) { reminderUpdate = options; } };
+        return {
+          async edit(options) {
+            reminderUpdate = options;
+          },
+        };
       },
     },
   };
-  const controller = new EventController({
-    async getEventByAdmissionMessageId() { return event; },
-    async closeEventAdmission(eventId) {
-      assert.equal(eventId, event.id);
-      return true;
+  const controller = new EventController(
+    {
+      async getEventByAdmissionMessageId() {
+        return event;
+      },
+      async closeEventAdmission(eventId) {
+        assert.equal(eventId, event.id);
+        return true;
+      },
+      async getEvent() {
+        return closedEvent;
+      },
+      async getEventReminderMessageIds() {
+        return ["62345678901234567"];
+      },
     },
-    async getEvent() { return closedEvent; },
-    async getEventReminderMessageIds() { return ["62345678901234567"]; },
-  }, {}, {});
+    {},
+    {},
+  );
 
   await controller.handleContextMenu({
     commandName: "Close Event",
     guildId: event.guild_id,
     targetMessage: { id: event.message_id },
-    memberPermissions: { has() { return true; } },
-    inGuild() { return true; },
+    memberPermissions: {
+      has() {
+        return true;
+      },
+    },
+    inGuild() {
+      return true;
+    },
     client: {
       user: { id: webhook.owner.id },
-      channels: { async fetch() { return channel; } },
+      channels: {
+        async fetch() {
+          return channel;
+        },
+      },
     },
     async deferReply(options) {
       assert.equal(options.flags, MessageFlags.Ephemeral);
     },
-    async editReply(options) { confirmation = options; },
+    async editReply(options) {
+      confirmation = options;
+    },
   });
 
-  assert.equal(
-    originalUpdate.components[0].components[0].toJSON().disabled,
-    true,
-  );
+  assert.equal(originalUpdate.components[0].components[0].toJSON().disabled, true);
   assert.match(originalUpdate.content, /RSVPs close/);
-  assert.equal(
-    reminderUpdate.components[0].components[0].toJSON().disabled,
-    true,
-  );
+  assert.equal(reminderUpdate.components[0].components[0].toJSON().disabled, true);
   assert.match(confirmation.content, /Closed.*No new RSVPs/i);
 });
 
@@ -387,20 +476,26 @@ test("logs interest but refuses admission buttons after their deadlines", async 
 
   for (const testCase of cases) {
     let interest;
-    const controller = new EventController({
-      async getEvent() { return testCase.event; },
-      async recordInterest(eventId, userId, kind) {
-        interest = { eventId, userId, kind };
-        return true;
+    const controller = new EventController(
+      {
+        async getEvent() {
+          return testCase.event;
+        },
+        async recordInterest(eventId, userId, kind) {
+          interest = { eventId, userId, kind };
+          return true;
+        },
+        async getRsvpStatus() {
+          assert.fail("closed buttons must stop before RSVP lookup");
+        },
       },
-      async getRsvpStatus() {
-        assert.fail("closed buttons must stop before RSVP lookup");
+      { async flush() {} },
+      {
+        async startCheckout() {
+          assert.fail("closed buttons must stop before Checkout");
+        },
       },
-    }, { async flush() {} }, {
-      async startCheckout() {
-        assert.fail("closed buttons must stop before Checkout");
-      },
-    });
+    );
 
     await assert.rejects(
       controller.handleButton({
@@ -423,19 +518,42 @@ test("logs interest but refuses admission buttons after their deadlines", async 
 });
 
 test("requires a connected or exempt role before showing the RSVP confirmation", async () => {
-  const event = { id: 42, guild_id: "12345678901234567", announcement_channel_id: "22345678901234567", message_id: "42345678901234567", creator_id: "32345678901234567", title: "Test event", schedule_text: "Saturday", location: "Gold Coast", announcement: "Test.", artwork_url: null, artwork_name: null, status: "published", created_at: 100, published_at: 101 };
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "42345678901234567",
+    creator_id: "32345678901234567",
+    title: "Test event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    status: "published",
+    created_at: 100,
+    published_at: 101,
+  };
   let reply;
-  const controller = new EventController({
-    async getEvent() { return event; },
-    async recordInterest(eventId, userId, kind) {
-      assert.deepEqual(
-        { eventId, userId, kind },
-        { eventId: event.id, userId: "42345678901234567", kind: "rsvp" },
-      );
-      return true;
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+      async recordInterest(eventId, userId, kind) {
+        assert.deepEqual(
+          { eventId, userId, kind },
+          { eventId: event.id, userId: "42345678901234567", kind: "rsvp" },
+        );
+        return true;
+      },
+      async getRsvpStatus() {
+        assert.fail("ineligible members must not reach the RSVP lookup");
+      },
     },
-    async getRsvpStatus() { assert.fail("ineligible members must not reach the RSVP lookup"); },
-  }, { async flush() {} }, {});
+    { async flush() {} },
+    {},
+  );
 
   await controller.handleButton({
     customId: `event:rsvp:${event.id}`,
@@ -443,8 +561,12 @@ test("requires a connected or exempt role before showing the RSVP confirmation",
     user: { id: "42345678901234567" },
     message: { id: event.message_id },
     member: { roles: [] },
-    async deferReply(options) { assert.equal(options.flags, MessageFlags.Ephemeral); },
-    async editReply(options) { reply = options; },
+    async deferReply(options) {
+      assert.equal(options.flags, MessageFlags.Ephemeral);
+    },
+    async editReply(options) {
+      reply = options;
+    },
   });
 
   assert.match(reply.content, /please verify first/i);
@@ -452,12 +574,34 @@ test("requires a connected or exempt role before showing the RSVP confirmation",
 });
 
 test("checks RSVP eligibility again when confirming", async () => {
-  const event = { id: 42, guild_id: "12345678901234567", announcement_channel_id: "22345678901234567", message_id: "42345678901234567", creator_id: "32345678901234567", title: "Test event", schedule_text: "Saturday", location: "Gold Coast", announcement: "Test.", artwork_url: null, artwork_name: null, status: "published", created_at: 100, published_at: 101 };
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "42345678901234567",
+    creator_id: "32345678901234567",
+    title: "Test event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Test.",
+    artwork_url: null,
+    artwork_name: null,
+    status: "published",
+    created_at: 100,
+    published_at: 101,
+  };
   let reply;
-  const controller = new EventController({
-    async getEvent() { return event; },
-    async confirmRsvp() { assert.fail("ineligible members must not be recorded as RSVP'd"); },
-  }, {});
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+      async confirmRsvp() {
+        assert.fail("ineligible members must not be recorded as RSVP'd");
+      },
+    },
+    {},
+  );
 
   await controller.handleButton({
     customId: `event:rsvp-confirm:${event.id}`,
@@ -465,7 +609,9 @@ test("checks RSVP eligibility again when confirming", async () => {
     user: { id: "42345678901234567" },
     member: { roles: [] },
     async deferUpdate() {},
-    async editReply(options) { reply = options; },
+    async editReply(options) {
+      reply = options;
+    },
   });
 
   assert.match(reply.content, /please verify first/i);
@@ -492,12 +638,17 @@ test("rejects RSVP buttons for paid events", async () => {
     created_at: 100,
     published_at: 101,
   };
-  const controller = new EventController({
-    async getEvent() { return event; },
-    async getRsvpStatus() {
-      assert.fail("paid events must not reach the RSVP lookup");
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+      async getRsvpStatus() {
+        assert.fail("paid events must not reach the RSVP lookup");
+      },
     },
-  }, {});
+    {},
+  );
 
   await assert.rejects(
     controller.handleButton({
@@ -532,7 +683,11 @@ test("publishes through a new webhook as the command runner", async () => {
     id: event.announcement_channel_id,
     type: ChannelType.GuildText,
     async fetchWebhooks() {
-      return { find() { return undefined; } };
+      return {
+        find() {
+          return undefined;
+        },
+      };
     },
     async createWebhook(options) {
       webhookCreates += 1;
@@ -543,14 +698,27 @@ test("publishes through a new webhook as the command runner", async () => {
       assert.fail("event announcements must not be sent as the bot");
     },
   };
-  const controller = new EventController({
-    async getEvent() { return event; },
-    async claimEventForPublishing() { return true; },
-    async finishPublishing(_eventId, messageId) { publishedMessageId = messageId; },
-  }, {});
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+      async claimEventForPublishing() {
+        return true;
+      },
+      async finishPublishing(_eventId, messageId) {
+        publishedMessageId = messageId;
+      },
+    },
+    {},
+  );
   let reply;
 
-  await controller.handleButton(publishInteraction(event, channel, (options) => { reply = options; }));
+  await controller.handleButton(
+    publishInteraction(event, channel, (options) => {
+      reply = options;
+    }),
+  );
 
   assert.equal(webhookCreates, 1);
   assert.equal(createdWebhook.name, "Club Manager Event Announcements");
@@ -569,24 +737,40 @@ test("reuses the bot-owned event webhook", async () => {
     name: "Club Manager Event Announcements",
     owner: { id: "62345678901234567" },
     token: "webhook-token",
-    isIncoming() { return true; },
-    async send() { sends += 1; return { id: "72345678901234567" }; },
+    isIncoming() {
+      return true;
+    },
+    async send() {
+      sends += 1;
+      return { id: "72345678901234567" };
+    },
   };
   const channel = {
     id: event.announcement_channel_id,
     type: ChannelType.GuildAnnouncement,
     async fetchWebhooks() {
-      return { find(predicate) { return predicate(webhook) ? webhook : undefined; } };
+      return {
+        find(predicate) {
+          return predicate(webhook) ? webhook : undefined;
+        },
+      };
     },
     async createWebhook() {
       assert.fail("an existing bot-owned event webhook should be reused");
     },
   };
-  const controller = new EventController({
-    async getEvent() { return event; },
-    async claimEventForPublishing() { return true; },
-    async finishPublishing() {},
-  }, {});
+  const controller = new EventController(
+    {
+      async getEvent() {
+        return event;
+      },
+      async claimEventForPublishing() {
+        return true;
+      },
+      async finishPublishing() {},
+    },
+    {},
+  );
 
   await controller.handleButton(publishInteraction(event, channel, () => {}));
 
@@ -623,20 +807,36 @@ function publishInteraction(event, channel, editReply) {
       id: event.creator_id,
       globalName: "Global Admin",
       username: "admin",
-      displayAvatarURL() { return "https://cdn.example/admin-avatar.png"; },
+      displayAvatarURL() {
+        return "https://cdn.example/admin-avatar.png";
+      },
     },
     member: {
       displayName: "Event Admin",
-      displayAvatarURL() { return "https://cdn.example/admin-server-avatar.png"; },
+      displayAvatarURL() {
+        return "https://cdn.example/admin-server-avatar.png";
+      },
     },
-    memberPermissions: { has() { return true; } },
-    inGuild() { return true; },
+    memberPermissions: {
+      has() {
+        return true;
+      },
+    },
+    inGuild() {
+      return true;
+    },
     client: {
       user: { id: "62345678901234567" },
-      channels: { async fetch() { return channel; } },
+      channels: {
+        async fetch() {
+          return channel;
+        },
+      },
     },
     async deferUpdate() {},
-    async editReply(options) { editReply(options); },
+    async editReply(options) {
+      editReply(options);
+    },
   };
 }
 
@@ -717,8 +917,14 @@ test("rejects wizard schedules that start in the past", async () => {
     controller.handleModal({
       guildId: "12345678901234567",
       user: { id: "32345678901234567" },
-      memberPermissions: { has() { return true; } },
-      inGuild() { return true; },
+      memberPermissions: {
+        has() {
+          return true;
+        },
+      },
+      inGuild() {
+        return true;
+      },
       customId: `event:create:schedule:${token}`,
       fields: {
         getTextInputValue(id) {

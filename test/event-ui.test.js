@@ -22,8 +22,7 @@ const event = {
   title: "Griffith AI-Hackathon 2026",
   schedule_text: "Saturday 1 August 2026, 10:00 am–5:00 pm",
   location: "In person, Gold Coast — room TBD",
-  announcement:
-    "Secret long-form details about teams, lunch, prizes, and the afters.",
+  announcement: "Secret long-form details about teams, lunch, prizes, and the afters.",
   artwork_url: null,
   artwork_name: null,
   status: "published",
@@ -80,10 +79,7 @@ test("keeps payment separate and the long announcement out of RSVP prompts", () 
   assert.deepEqual(rsvpPrompt.embeds ?? [], []);
   assert.match(rsvpPrompt.content ?? "", /No payment is required/);
   assert.doesNotMatch(rsvpPrompt.content ?? "", /\$5|\$FREE/);
-  assert.doesNotMatch(
-    rsvpPrompt.content ?? "",
-    /Secret long-form details/,
-  );
+  assert.doesNotMatch(rsvpPrompt.content ?? "", /Secret long-form details/);
   assert.match(rsvpPrompt.content ?? "", new RegExp(event.schedule_text));
   assert.doesNotMatch(rsvpPrompt.content ?? "", new RegExp(event.title));
   assert.match(rsvpPrompt.content ?? "", new RegExp(event.location));
@@ -104,20 +100,14 @@ test("shows uploaded artwork in the private preview", () => {
 test("uses a gray RSVP button and no announcement link buttons", () => {
   const publicMessage = buildPublicEventMessage(event);
   const publicButton = publicMessage.components?.[0]?.components[0]?.toJSON();
-  const privateMessages = [
-    buildRsvpPrompt(event),
-    buildCurrentRsvp(event),
-  ];
+  const privateMessages = [buildRsvpPrompt(event), buildCurrentRsvp(event)];
 
   assert.equal(publicButton?.style, ButtonStyle.Secondary);
 
   for (const message of privateMessages) {
     const buttons =
       message.components?.[0]?.components.map((button) => button.toJSON()) ?? [];
-    assert.doesNotMatch(
-      buttons.map(({ label }) => label).join(" "),
-      /View announcement/,
-    );
+    assert.doesNotMatch(buttons.map(({ label }) => label).join(" "), /View announcement/);
     assert.ok(buttons.every(({ style }) => style !== ButtonStyle.Link));
   }
 });
@@ -146,10 +136,7 @@ test("adds paid ticket pricing and secure Checkout to paid events", () => {
     ["Buy ticket — A$12.50"],
   );
   assert.equal(checkoutButton?.style, ButtonStyle.Link);
-  assert.equal(
-    checkoutButton?.url,
-    "https://checkout.stripe.com/c/pay/test",
-  );
+  assert.equal(checkoutButton?.url, "https://checkout.stripe.com/c/pay/test");
 });
 
 test("clearly labels Stripe test-mode events and checkout", () => {
@@ -162,10 +149,7 @@ test("clearly labels Stripe test-mode events and checkout", () => {
   };
   const publicMessage = buildPublicEventMessage(testEvent);
   const publicButton = publicMessage.components?.[0]?.components[0]?.toJSON();
-  const checkout = buildTicketCheckout(
-    testEvent,
-    "https://checkout.stripe.com/test",
-  );
+  const checkout = buildTicketCheckout(testEvent, "https://checkout.stripe.com/test");
   const checkoutButton = checkout.components?.[0]?.components[0]?.toJSON();
 
   assert.match(publicMessage.content ?? "", /TEST EVENT.*NO REAL MONEY/i);
@@ -216,11 +200,7 @@ test("shows structured event and ticket closing times", () => {
     "Closed",
     2_600,
   );
-  const reminder = buildReminderMessage(
-    timedEvent,
-    "@everyone Reminder",
-    2_600,
-  );
+  const reminder = buildReminderMessage(timedEvent, "@everyone Reminder", 2_600);
   const reminderButton = reminder.components?.[0]?.components[0]?.toJSON();
 
   assert.match(publicMessage.content ?? "", /<t:2000:F>/);
@@ -235,11 +215,7 @@ test("shows structured event and ticket closing times", () => {
     true,
   );
   assert.equal(reminder.content, "@everyone Reminder");
-  assert.deepEqual(reminder.allowedMentions?.parse, [
-    "everyone",
-    "roles",
-    "users",
-  ]);
+  assert.deepEqual(reminder.allowedMentions?.parse, ["everyone", "roles", "users"]);
   assert.equal(reminderButton?.custom_id, `event:buy:${event.id}`);
   assert.equal(reminderButton?.disabled, true);
 });

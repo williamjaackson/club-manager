@@ -1,9 +1,6 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { Client } from "discord.js";
-import {
-  InvalidStripeWebhookError,
-  type TicketingService,
-} from "./ticketing.js";
+import { InvalidStripeWebhookError, type TicketingService } from "./ticketing.js";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
@@ -40,16 +37,13 @@ export function createHttpServer(
 
     if (
       request.method === "POST" &&
-      (url.pathname === "/stripe/webhook" ||
-        url.pathname === "/stripe/test-webhook")
+      (url.pathname === "/stripe/webhook" || url.pathname === "/stripe/test-webhook")
     ) {
       try {
         const signature = request.headers["stripe-signature"];
 
         if (typeof signature !== "string") {
-          throw new InvalidStripeWebhookError(
-            "Missing Stripe-Signature header",
-          );
+          throw new InvalidStripeWebhookError("Missing Stripe-Signature header");
         }
 
         const payload = await readBody(request);
@@ -75,16 +69,14 @@ export function createHttpServer(
     if (request.method === "GET" && url.pathname === "/stripe/success") {
       const sessionId = url.searchParams.get("session_id");
       const status = sessionId
-        ? await ticketing
-            .checkoutStatus(sessionId)
-            .catch(() => "unknown" as const)
+        ? await ticketing.checkoutStatus(sessionId).catch(() => "unknown" as const)
         : "unknown";
       const message =
         status === "paid"
           ? "Your ticket is confirmed."
           : status === "refunded"
             ? "This ticket was refunded and is no longer valid."
-          : "Payment received. Your ticket is being confirmed.";
+            : "Payment received. Your ticket is being confirmed.";
       html(response, 200, "Ticket checkout", message);
       return;
     }

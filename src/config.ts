@@ -52,8 +52,5 @@ export const config = {
   stripeWebhookSecret: required("STRIPE_WEBHOOK_SECRET"),
   stripeTestSecretKey: optional("STRIPE_TEST_SECRET_KEY"),
   stripeTestWebhookSecret: optional("STRIPE_TEST_WEBHOOK_SECRET"),
-  rsvpLogChannelId: snowflake(
-    "RSVP_LOG_CHANNEL_ID",
-    "1530755171645132921",
-  ),
+  rsvpLogChannelId: snowflake("RSVP_LOG_CHANNEL_ID", "1530755171645132921"),
 };

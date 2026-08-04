@@ -12,11 +12,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Type-check
+        run: pnpm run check
+
+      - name: Test
+        run: pnpm test
+
   deploy:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
         uses: nick-fields/retry@v3
+        env:
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
         with:
           timeout_minutes: 5
           max_attempts: 3
@@ -25,7 +53,17 @@ jobs:
             echo "${{ secrets.VPS_SSH_KEY }}" > /tmp/deploy_key
             chmod 600 /tmp/deploy_key
             trap 'rm -f /tmp/deploy_key' EXIT
-            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i /tmp/deploy_key root@${{ secrets.VPS_HOST }} '
+            # Pin the host key when VPS_KNOWN_HOSTS is set (see
+            # scripts/setup-deploy-user.sh); otherwise trust on first use.
+            if [ -n "$VPS_KNOWN_HOSTS" ]; then
+              mkdir -p ~/.ssh
+              echo "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+              HOST_KEY_OPT="-o StrictHostKeyChecking=yes"
+            else
+              HOST_KEY_OPT="-o StrictHostKeyChecking=accept-new"
+            fi
+            ssh $HOST_KEY_OPT -o ConnectTimeout=30 -i /tmp/deploy_key \
+              "${VPS_SSH_USER:-root}@${{ secrets.VPS_HOST }}" '
               cd /opt/club-manager
               git fetch origin main
               git switch main
