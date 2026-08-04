@@ -13,7 +13,8 @@ export type AuditAction =
   | "cancel"
   | "ticket_paid"
   | "ticket_refunded"
-  | "ticket_price_adjusted";
+  | "ticket_price_adjusted"
+  | "event_cancelled";
 export type InterestKind = "rsvp" | "ticket";
 export type TicketOrderStatus = "pending" | "paid" | "refunded";
 
@@ -41,6 +42,7 @@ export interface EventRecord {
   created_at: number;
   published_at: number | null;
   edited_at: number | null;
+  cancelled_at: number | null;
 }
 
 export interface NewEventDraft {
@@ -176,6 +178,14 @@ export interface RsvpChange {
   status: RsvpStatus;
 }
 
+export interface EventAttendeeRecord {
+  userId: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  amountTotalCents: number | null;
+  respondedAt: number | null;
+}
+
 export interface PriceDropRefund {
   orderId: number;
   userId: string;
@@ -298,7 +308,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
           CHECK (status IN ('draft', 'publishing', 'published', 'discarded')),
         created_at DOUBLE PRECISION NOT NULL,
         published_at DOUBLE PRECISION,
-        edited_at DOUBLE PRECISION
+        edited_at DOUBLE PRECISION,
+        cancelled_at DOUBLE PRECISION
       );
 
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_price_cents INTEGER;
@@ -310,6 +321,7 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE events ADD COLUMN IF NOT EXISTS ticket_sales_close_at DOUBLE PRECISION;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS location_url TEXT;
       ALTER TABLE events ADD COLUMN IF NOT EXISTS edited_at DOUBLE PRECISION;
+      ALTER TABLE events ADD COLUMN IF NOT EXISTS cancelled_at DOUBLE PRECISION;
 
       CREATE TABLE IF NOT EXISTS pending_event_creates (
         token TEXT PRIMARY KEY,
@@ -430,7 +442,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
         action TEXT NOT NULL CONSTRAINT audit_outbox_action_check
           CHECK (action IN (
             'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-            'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted'
+            'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted',
+            'event_cancelled'
           )),
         created_at DOUBLE PRECISION NOT NULL,
         next_attempt_at DOUBLE PRECISION NOT NULL,
@@ -445,7 +458,8 @@ export async function setupDatabase(pool: Pool): Promise<void> {
       ALTER TABLE audit_outbox ADD CONSTRAINT audit_outbox_action_check
         CHECK (action IN (
           'interest_rsvp', 'interest_ticket', 'rsvp', 'cancel',
-          'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted'
+          'ticket_paid', 'ticket_refunded', 'ticket_price_adjusted',
+          'event_cancelled'
         ));
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
@@ -1638,6 +1652,201 @@ export class Store {
 
       await client.query("COMMIT");
       return { event: updated.rows[0] as EventRecord, refunds };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async listEvents(
+    guildId: string,
+    offset: number,
+    limit: number,
+  ): Promise<{ events: EventRecord[]; total: number }> {
+    const [rows, count] = await Promise.all([
+      this.#pool.query(
+        `
+          SELECT * FROM events
+          WHERE guild_id = $1 AND status <> 'discarded'
+          ORDER BY created_at DESC, id DESC
+          LIMIT $2 OFFSET $3
+        `,
+        [guildId, limit, offset],
+      ),
+      this.#pool.query(
+        "SELECT COUNT(*)::integer AS count FROM events WHERE guild_id = $1 AND status <> 'discarded'",
+        [guildId],
+      ),
+    ]);
+    return {
+      events: rows.rows as EventRecord[],
+      total: Number((count.rows[0] as { count: number }).count),
+    };
+  }
+
+  async getEventAttendees(eventId: number): Promise<EventAttendeeRecord[]> {
+    const event = await this.#getEvent(this.#pool, eventId);
+    if (!event) return [];
+
+    if (event.ticket_price_cents !== null) {
+      const result = await this.#pool.query(
+        `
+          SELECT user_id, customer_name, customer_email, amount_total, paid_at
+          FROM ticket_orders
+          WHERE event_id = $1 AND status = 'paid'
+          ORDER BY paid_at, id
+        `,
+        [eventId],
+      );
+      return (
+        result.rows as {
+          user_id: string;
+          customer_name: string | null;
+          customer_email: string | null;
+          amount_total: number | null;
+          paid_at: number | null;
+        }[]
+      ).map((row) => ({
+        userId: row.user_id,
+        customerName: row.customer_name,
+        customerEmail: row.customer_email,
+        amountTotalCents: row.amount_total,
+        respondedAt: row.paid_at,
+      }));
+    }
+
+    const result = await this.#pool.query(
+      `
+        SELECT user_id, updated_at
+        FROM rsvps
+        WHERE event_id = $1 AND status = 'active'
+        ORDER BY updated_at, user_id
+      `,
+      [eventId],
+    );
+    return (result.rows as { user_id: string; updated_at: number }[]).map((row) => ({
+      userId: row.user_id,
+      customerName: null,
+      customerEmail: null,
+      amountTotalCents: null,
+      respondedAt: row.updated_at,
+    }));
+  }
+
+  // Cancels a published event: admission closes immediately, every active
+  // attendee gets a DM-only notification row, and the paid orders that need
+  // full Stripe refunds are returned to the caller.
+  async cancelEvent(
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<
+    | {
+        event: EventRecord;
+        refunds: { orderId: number; userId: string; paymentIntentId: string | null }[];
+      }
+    | undefined
+  > {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const current = await this.#getEvent(client, eventId, true);
+      if (current?.status !== "published" || typeof current.cancelled_at === "number") {
+        await client.query("COMMIT");
+        return undefined;
+      }
+
+      const updated = await client.query(
+        `
+          UPDATE events
+          SET cancelled_at = $1, ticket_sales_close_at = $1
+          WHERE id = $2
+          RETURNING *
+        `,
+        [now, eventId],
+      );
+      const event = updated.rows[0] as EventRecord;
+
+      const attendees =
+        event.ticket_price_cents !== null
+          ? await client.query(
+              `
+                SELECT user_id FROM ticket_orders
+                WHERE event_id = $1 AND status = 'paid'
+              `,
+              [eventId],
+            )
+          : await client.query(
+              "SELECT user_id FROM rsvps WHERE event_id = $1 AND status = 'active'",
+              [eventId],
+            );
+      for (const row of attendees.rows as { user_id: string }[]) {
+        await client.query(
+          `
+            INSERT INTO audit_outbox (
+              event_id, user_id, action, created_at, next_attempt_at
+            ) VALUES ($1, $2, 'event_cancelled', $3, $4)
+          `,
+          [eventId, row.user_id, now, now],
+        );
+      }
+
+      let refunds: {
+        orderId: number;
+        userId: string;
+        paymentIntentId: string | null;
+      }[] = [];
+      if (event.ticket_price_cents !== null) {
+        const orders = await client.query(
+          `
+            SELECT id, user_id, stripe_payment_intent_id
+            FROM ticket_orders
+            WHERE event_id = $1 AND status = 'paid'
+            ORDER BY id
+          `,
+          [eventId],
+        );
+        refunds = (
+          orders.rows as {
+            id: number;
+            user_id: string;
+            stripe_payment_intent_id: string | null;
+          }[]
+        ).map((row) => ({
+          orderId: row.id,
+          userId: row.user_id,
+          paymentIntentId: row.stripe_payment_intent_id,
+        }));
+      }
+
+      await client.query("COMMIT");
+      return { event, refunds };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Permanently removes an event and every dependent row. Does not touch
+  // Discord messages or Stripe; cancel first if refunds are needed.
+  async deleteEventCascade(eventId: number): Promise<boolean> {
+    const client = await this.#pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM audit_outbox WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM ticket_orders WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM rsvps WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM rsvp_history WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM event_interest WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM event_reminders WHERE event_id = $1", [eventId]);
+      const result = await client.query("DELETE FROM events WHERE id = $1", [eventId]);
+      await client.query("COMMIT");
+      return result.rowCount === 1;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;

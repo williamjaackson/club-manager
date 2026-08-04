@@ -63,6 +63,16 @@ refunds every earlier buyer the difference through Stripe automatically —
 ticket holders keep their tickets and are notified by DM. (Stripe does not
 return the original processing fees when refunding.)
 
+Run `/event list` to browse every event, newest first, five per page. Pick an
+event from the menu to see its status and live count, list its attendees or
+ticket holders, export them as CSV (including Stripe names and emails for paid
+tickets), cancel it, or delete it. **Cancel event** closes admission, updates
+the announcement, DMs every attendee, and issues full Stripe refunds for paid
+tickets after an explicit confirmation that shows the total being refunded.
+**Delete from database** permanently removes the event and all of its records
+after a confirmation — it never refunds, so cancel first when money is
+involved.
+
 Right-click a published event announcement or one of its reminders and select
 **Apps → Close Event** to stop admission immediately. The administrator-only
 message command closes free RSVPs and paid ticket sales, updates the original

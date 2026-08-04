@@ -783,3 +783,79 @@ test("applies published-event edits and plans price-drop refunds", async () => {
     await context.close();
   }
 });
+
+test("lists, cancels, and deletes events with cascading cleanup", async () => {
+  const context = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    const second = await context.store.createEventDraft(
+      {
+        guildId: context.event.guild_id,
+        announcementChannelId: "22345678901234567",
+        creatorId: "32345678901234567",
+        title: "Newer event",
+        scheduleText: "Sunday",
+        location: "Brisbane",
+        announcement: "Second announcement.",
+      },
+      200,
+    );
+
+    const page = await context.store.listEvents(context.event.guild_id, 0, 5);
+    assert.equal(page.total, 2);
+    assert.deepEqual(
+      page.events.map(({ id }) => id),
+      [second.id, context.event.id],
+    );
+
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 300);
+    const reservation = await context.store.reserveTicketCheckout(
+      context.event.id,
+      "52345678901234567",
+      400,
+    );
+    const attached = await context.store.attachTicketCheckout(
+      reservation.order.id,
+      reservation.order.attempt,
+      "cs_cancel_test",
+      "https://checkout.stripe.com/test",
+      401,
+    );
+    await context.store.fulfillTicketOrder(
+      attached.id,
+      "cs_cancel_test",
+      { paymentIntentId: "pi_cancel_test", amountTotal: 1250, currency: "aud" },
+      402,
+    );
+
+    const attendees = await context.store.getEventAttendees(context.event.id);
+    assert.equal(attendees.length, 1);
+    assert.equal(attendees[0]?.userId, "52345678901234567");
+
+    const cancelled = await context.store.cancelEvent(context.event.id, 500);
+    assert.equal(cancelled?.event.cancelled_at, 500);
+    assert.deepEqual(cancelled?.refunds, [
+      {
+        orderId: attached.id,
+        userId: "52345678901234567",
+        paymentIntentId: "pi_cancel_test",
+      },
+    ]);
+    assert.equal(await context.store.cancelEvent(context.event.id, 501), undefined);
+
+    const audits = await context.store.getPendingAudit(600);
+    assert.ok(audits.some(({ action }) => action === "event_cancelled"));
+
+    assert.equal(await context.store.deleteEventCascade(context.event.id), true);
+    assert.equal(await context.store.deleteEventCascade(context.event.id), false);
+    assert.equal(await context.store.getEvent(context.event.id), undefined);
+    assert.deepEqual(await context.store.getPendingAudit(700), []);
+    assert.equal((await context.store.listEvents(context.event.guild_id, 0, 5)).total, 1);
+  } finally {
+    await context.close();
+  }
+});

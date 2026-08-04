@@ -62,6 +62,11 @@ export class AuditLogger {
   }
 
   async #send(record: AuditOutboxRecord): Promise<void> {
+    if (record.action === "event_cancelled") {
+      await this.#sendCancellationDm(record);
+      return;
+    }
+
     const { rsvpLogChannelId } = await this.#settings.resolve(record.guild_id);
     if (!rsvpLogChannelId) {
       throw new Error(`Guild ${record.guild_id} has no RSVP log channel; run /config`);
@@ -105,6 +110,21 @@ export class AuditLogger {
     ) {
       await this.#sendTicketDm(record, eventUrl);
     }
+  }
+
+  // Cancellation notices go straight to the member; the log channel gets the
+  // admin's own confirmation instead of one row per attendee. Blocked DMs
+  // throw so the outbox retries and eventually parks the record.
+  async #sendCancellationDm(record: AuditOutboxRecord): Promise<void> {
+    const note = testModeNote(record.test_mode);
+    const refundLine =
+      record.detail ??
+      "If you bought a ticket, Stripe will refund it to your card automatically.";
+    const user = await this.#client.users.fetch(record.user_id);
+    await user.send(
+      `❌ **${escapeMarkdown(record.title)}** has been cancelled. ${refundLine}` +
+        (note ? `\n${note}` : ""),
+    );
   }
 
   // Members can block DMs, so a failed confirmation must not keep the
