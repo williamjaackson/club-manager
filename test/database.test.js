@@ -307,6 +307,33 @@ test("rejects RSVPs before an event is published", async () => {
   }
 });
 
+test("rejects RSVPs for paid events", async () => {
+  const context = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+  });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(
+      context.event.id,
+      "42345678901234567",
+      200,
+    );
+
+    await assert.rejects(
+      context.store.confirmRsvp(
+        context.event.id,
+        "52345678901234567",
+        300,
+      ),
+      EventUnavailableError,
+    );
+  } finally {
+    await context.close();
+  }
+});
+
 test("keeps open event forms across database pool restarts", async () => {
   const memory = newDb();
   const adapter = memory.adapters.createPg();

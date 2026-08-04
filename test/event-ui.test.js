@@ -129,7 +129,7 @@ test("adds paid ticket pricing and secure Checkout to paid events", () => {
   assert.match(publicMessage.content ?? "", /50-ticket capacity/);
   assert.deepEqual(
     buttons?.map(({ label }) => label),
-    ["RSVP", "Buy ticket — A$12.50"],
+    ["Buy ticket — A$12.50"],
   );
   assert.equal(checkoutButton?.style, ButtonStyle.Link);
   assert.equal(

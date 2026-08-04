@@ -4,9 +4,9 @@ A Discord-native event announcement, RSVP, and Stripe ticketing bot for
 Griffith ICT Club.
 
 Administrators create an event with `/event create`, review a private preview,
-and publish it to a selected channel. Members RSVP through a button on the
-announcement. Events can be RSVP-only or sell capacity-limited paid tickets
-through Stripe Checkout. RSVP and ticket data are stored in Neon PostgreSQL;
+and publish it to a selected channel. Free events accept RSVPs; paid events sell
+capacity-limited tickets through Stripe Checkout. RSVP and ticket data are
+stored in Neon PostgreSQL;
 RSVP changes are also mirrored to a private audit channel.
 
 ## Current event flow
@@ -33,11 +33,9 @@ member's `Administrator` permission at runtime.
 
 ### Members
 
-The published announcement has an **RSVP** button. Selecting it opens a private
-summary containing the schedule and location. It does not repeat the full
-announcement. RSVP is deliberately separate from paid admission.
-
-Paid events also have a **Buy ticket** button. It creates a private,
+Free-event announcements have an **RSVP** button. Selecting it opens a private
+summary containing the schedule and location. Paid events instead have a
+**Buy ticket** button; they do not accept RSVPs. Buying creates a private,
 approximately 30-minute reservation and links the member to Stripe-hosted
 Checkout. One Discord member can hold one paid ticket for an event. Selecting
 the button after purchase shows the existing ticket confirmation instead of

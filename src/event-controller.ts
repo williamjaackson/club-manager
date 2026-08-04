@@ -366,6 +366,7 @@ export class EventController {
     event: EventRecord,
   ): Promise<void> {
     this.#requirePublished(event);
+    this.#requireFreeEvent(event);
 
     if (interaction.message.id !== event.message_id) {
       throw new Error("Use the RSVP button on the original announcement.");
@@ -392,6 +393,8 @@ export class EventController {
     interaction: ButtonInteraction,
     event: EventRecord,
   ): Promise<void> {
+    this.#requireFreeEvent(event);
+
     if (!this.#canRsvp(interaction)) {
       await interaction.editReply(this.#verificationRequiredReply());
       return;
@@ -403,6 +406,12 @@ export class EventController {
     );
     await interaction.editReply(buildRsvpComplete(event, result.changed));
     void this.#audit.flush();
+  }
+
+  #requireFreeEvent(event: EventRecord): void {
+    if (typeof event.ticket_price_cents === "number") {
+      throw new Error("This is a paid event. Use the Buy ticket button instead.");
+    }
   }
 
   async #buyTicket(
