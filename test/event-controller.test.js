@@ -441,6 +441,9 @@ test("closes an event from its message context menu and disables its buttons", a
       async getEvent() {
         return closedEvent;
       },
+      async getEventAttendance() {
+        return { going: 3 };
+      },
       async getEventReminderMessageIds() {
         return ["62345678901234567"];
       },

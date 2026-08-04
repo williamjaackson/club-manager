@@ -1279,7 +1279,7 @@ export class Store {
       testMode: boolean;
     },
     now = currentTimestamp(),
-  ): Promise<boolean> {
+  ): Promise<number | undefined> {
     const client = await this.#pool.connect();
 
     try {
@@ -1322,7 +1322,7 @@ export class Store {
       }
 
       await client.query("COMMIT");
-      return Boolean(order);
+      return order?.event_id;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;
@@ -1644,6 +1644,41 @@ export class Store {
     } finally {
       client.release();
     }
+  }
+
+  // How many members currently hold a place: active RSVPs for free events,
+  // paid or actively-reserved orders for ticketed events.
+  async getEventAttendance(
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<{ going: number }> {
+    const event = await this.#getEvent(this.#pool, eventId);
+    if (!event) return { going: 0 };
+
+    const result =
+      event.ticket_price_cents !== null
+        ? await this.#pool.query(
+            `
+              SELECT COUNT(*)::integer AS count
+              FROM ticket_orders
+              WHERE
+                event_id = $1
+                AND (
+                  status = 'paid'
+                  OR (status = 'pending' AND reservation_expires_at > $2)
+                )
+            `,
+            [eventId, now],
+          )
+        : await this.#pool.query(
+            `
+              SELECT COUNT(*)::integer AS count
+              FROM rsvps
+              WHERE event_id = $1 AND status = 'active'
+            `,
+            [eventId],
+          );
+    return { going: Number((result.rows[0] as { count: number }).count) };
   }
 
   async previewPriceDropRefunds(

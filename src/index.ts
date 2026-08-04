@@ -7,6 +7,7 @@ import {
   MessageFlags,
 } from "discord.js";
 import Stripe from "stripe";
+import { AnnouncementRefresher } from "./announcement-refresher.js";
 import { AuditLogger } from "./audit.js";
 import { commandDefinitions } from "./commands.js";
 import { config } from "./config.js";
@@ -36,6 +37,7 @@ const settings = new GuildSettingsService(store, {
   ...(config.exemptRoleId ? { exemptRoleId: config.exemptRoleId } : {}),
 });
 const audit = new AuditLogger(client, store, settings);
+const refresher = new AnnouncementRefresher(client, store);
 const stripe = new Stripe(config.stripeSecretKey);
 const stripeTestMode =
   config.stripeTestSecretKey && config.stripeTestWebhookSecret
@@ -50,8 +52,9 @@ const ticketing = new TicketingService(
   config.publicBaseUrl,
   config.stripeWebhookSecret,
   stripeTestMode,
+  (eventId) => refresher.markDirty(eventId),
 );
-const eventController = new EventController(store, audit, ticketing, settings);
+const eventController = new EventController(store, audit, ticketing, settings, refresher);
 const httpServer = startHttpServer(client, ticketing, config.httpPort, () => {
   void audit.flush();
 });
@@ -103,6 +106,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   }
 
   audit.start();
+  refresher.start();
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -158,6 +162,7 @@ async function shutdown(signal: string): Promise<void> {
 
   console.log(`${signal} received; shutting down`);
   audit.stop();
+  refresher.stop();
   httpServer.close();
   client.destroy();
   await store.close();
