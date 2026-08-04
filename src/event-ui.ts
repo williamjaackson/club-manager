@@ -458,15 +458,21 @@ function buildAdmissionRow(
   soldOut = false,
 ): ActionRowBuilder<ButtonBuilder> {
   const paid = Boolean(event.ticket_price_cents && event.ticket_currency);
-  const label = soldOut
-    ? paid
-      ? "Sold out"
-      : "At capacity"
-    : paid
-      ? event.test_mode
-        ? `Test checkout — ${formatTicketPrice(event)}`
-        : `Buy ticket — ${formatTicketPrice(event)}`
-      : "RSVP";
+
+  if (soldOut && !disabled) {
+    const waitlist = new ButtonBuilder()
+      .setCustomId(`event:waitlist:${event.id}`)
+      .setLabel(paid ? "Sold out — join waitlist" : "At capacity — join waitlist")
+      .setEmoji("⏳")
+      .setStyle(ButtonStyle.Secondary);
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(waitlist);
+  }
+
+  const label = paid
+    ? event.test_mode
+      ? `Test checkout — ${formatTicketPrice(event)}`
+      : `Buy ticket — ${formatTicketPrice(event)}`
+    : "RSVP";
   const admission = paid
     ? new ButtonBuilder()
         .setCustomId(`event:buy:${event.id}`)
@@ -478,7 +484,7 @@ function buildAdmissionRow(
         .setLabel(label)
         .setEmoji("🎟️")
         .setStyle(ButtonStyle.Secondary);
-  admission.setDisabled(disabled || soldOut);
+  admission.setDisabled(disabled);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(admission);
 }
 

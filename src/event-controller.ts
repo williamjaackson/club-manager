@@ -33,6 +33,7 @@ import {
   type NewEventDraft,
   type NewPendingEventCreate,
   type PendingEventCreateRecord,
+  RsvpCapacityReachedError,
   type Store,
   TicketSalesClosedError,
 } from "./database.js";
@@ -1043,10 +1044,20 @@ export class EventController {
       return true;
     }
 
+    const claim = /^event:claim:(\d+)$/.exec(interaction.customId);
+    if (claim) {
+      await this.#claimWaitlistSpot(interaction, Number(claim[1]));
+      return true;
+    }
+
     const parsed = parseEventButton(interaction.customId);
     if (!parsed) return false;
 
-    if (parsed.action === "rsvp" || parsed.action === "buy") {
+    if (
+      parsed.action === "rsvp" ||
+      parsed.action === "buy" ||
+      parsed.action === "waitlist"
+    ) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     } else {
       await interaction.deferUpdate();
@@ -1075,6 +1086,9 @@ export class EventController {
         return true;
       case "rsvp":
         await this.#showRsvp(interaction, event);
+        return true;
+      case "waitlist":
+        await this.#joinWaitlist(interaction, event);
         return true;
       case "buy":
         await this.#buyTicket(interaction, event);
@@ -1225,6 +1239,121 @@ export class EventController {
     await interaction.editReply(buildRsvpComplete(event, result.changed));
     if (result.changed) this.#refresher.markDirty(event.id);
     void this.#audit.flush();
+  }
+
+  async #joinWaitlist(interaction: ButtonInteraction, event: EventRecord): Promise<void> {
+    this.#requirePublished(event);
+    this.#requireRsvpOpen(event);
+    if (!(await this.#canRsvp(interaction))) {
+      await interaction.editReply(await this.#verificationRequiredReply(interaction));
+      return;
+    }
+
+    // If seats reopened since the button was rendered, route the member into
+    // the normal flow instead of queueing them.
+    const attendance = await this.#store.getEventAttendance(event.id);
+    if (typeof event.ticket_limit !== "number" || attendance.going < event.ticket_limit) {
+      if (event.ticket_price_cents) {
+        await this.#buyTicket(interaction, event);
+      } else {
+        await this.#showRsvp(interaction, event);
+      }
+      return;
+    }
+
+    if (event.ticket_price_cents) {
+      const existing = await this.#store.getTicketOrderForMember(
+        event.id,
+        interaction.user.id,
+      );
+      if (existing?.status === "paid") {
+        await interaction.editReply(buildTicketConfirmed(event));
+        return;
+      }
+    } else if (
+      (await this.#store.getRsvpStatus(event.id, interaction.user.id)) === "active"
+    ) {
+      await interaction.editReply(buildCurrentRsvp(event));
+      return;
+    }
+
+    const { joined, position } = await this.#store.joinWaitlist(
+      event.id,
+      interaction.user.id,
+    );
+    await interaction.editReply({
+      content:
+        (joined
+          ? `⏳ You're on the waitlist for **${event.title}** at position **#${position}**.`
+          : `⏳ You're already on the waitlist for **${event.title}** at position **#${position}**.`) +
+        " If a spot opens up you'll get a DM with 24 hours to claim it.",
+      embeds: [],
+      components: [],
+    });
+  }
+
+  // Claim buttons arrive from DMs, so there is no guild context or member
+  // roles here; eligibility was checked when the member joined the waitlist.
+  async #claimWaitlistSpot(
+    interaction: ButtonInteraction,
+    eventId: number,
+  ): Promise<void> {
+    await interaction.deferReply();
+    const event = await this.#store.getEvent(eventId);
+    if (event?.status !== "published") {
+      await interaction.editReply({ content: "That event no longer exists." });
+      return;
+    }
+
+    const entry = await this.#store.getWaitlistEntry(eventId, interaction.user.id);
+    const now = currentTimestamp();
+    if (!entry?.offer_expires_at || entry.offer_expires_at <= now) {
+      await interaction.editReply({
+        content:
+          "Your claim window has passed — the spot went to the next member in line.",
+      });
+      return;
+    }
+
+    try {
+      this.#requireRsvpOpen(event);
+    } catch {
+      await interaction.editReply({
+        content: `**${event.title}** is no longer accepting responses.`,
+      });
+      return;
+    }
+
+    if (event.ticket_price_cents) {
+      const checkout = await this.#ticketing.startCheckout(event, interaction.user.id);
+      await this.#store.removeWaitlistEntry(eventId, interaction.user.id);
+      this.#refresher.markDirty(event.id);
+      await interaction.editReply(
+        checkout.alreadyPaid
+          ? buildTicketConfirmed(event)
+          : buildTicketCheckout(event, checkout.checkoutUrl, checkout.discount),
+      );
+      return;
+    }
+
+    try {
+      const result = await this.#store.confirmRsvp(event.id, interaction.user.id);
+      await this.#store.removeWaitlistEntry(eventId, interaction.user.id);
+      this.#refresher.markDirty(event.id);
+      void this.#audit.flush();
+      await interaction.editReply(buildRsvpComplete(event, result.changed));
+    } catch (error) {
+      if (error instanceof RsvpCapacityReachedError) {
+        await this.#store.requeueWaitlistOffer(eventId, interaction.user.id);
+        await interaction.editReply({
+          content:
+            "That spot was taken before you claimed it — you're still on the " +
+            "waitlist and will be offered the next one.",
+        });
+        return;
+      }
+      throw error;
+    }
   }
 
   #requireFreeEvent(event: EventRecord): void {
@@ -1401,6 +1530,7 @@ const eventButtonActions = [
   "discard",
   "buy",
   "rsvp",
+  "waitlist",
   "rsvp-confirm",
   "cancel-confirm",
   "dismiss",

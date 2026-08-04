@@ -990,3 +990,65 @@ test("fulfills a fully discounted order without Stripe", async () => {
     await context.close();
   }
 });
+
+test("queues, offers, and expires waitlist places in order", async () => {
+  const context = await fixture({ ticketLimit: 1 });
+
+  try {
+    await context.store.claimEventForPublishing(context.event.id);
+    await context.store.finishPublishing(context.event.id, "42345678901234567", 200);
+    await context.store.confirmRsvp(context.event.id, "52345678901234567", 300);
+
+    const first = await context.store.joinWaitlist(
+      context.event.id,
+      "62345678901234567",
+      400,
+    );
+    const second = await context.store.joinWaitlist(
+      context.event.id,
+      "72345678901234567",
+      401,
+    );
+    const duplicate = await context.store.joinWaitlist(
+      context.event.id,
+      "62345678901234567",
+      402,
+    );
+    assert.deepEqual(first, { joined: true, position: 1 });
+    assert.deepEqual(second, { joined: true, position: 2 });
+    assert.deepEqual(duplicate, { joined: false, position: 1 });
+
+    const candidates = await context.store.nextWaitlistCandidates(context.event.id, 5);
+    assert.deepEqual(
+      candidates.map(({ user_id }) => user_id),
+      ["62345678901234567", "72345678901234567"],
+    );
+
+    await context.store.markWaitlistOffered(
+      context.event.id,
+      "62345678901234567",
+      1_000,
+      500,
+    );
+    assert.equal(await context.store.countActiveWaitlistOffers(context.event.id, 600), 1);
+    assert.deepEqual(
+      (await context.store.nextWaitlistCandidates(context.event.id, 5)).map(
+        ({ user_id }) => user_id,
+      ),
+      ["72345678901234567"],
+    );
+
+    // Past the window the offer expires and the member drops off entirely.
+    await context.store.expireWaitlistOffers(context.event.id, 1_001);
+    assert.equal(
+      await context.store.getWaitlistEntry(context.event.id, "62345678901234567"),
+      undefined,
+    );
+    assert.equal(
+      await context.store.countActiveWaitlistOffers(context.event.id, 1_001),
+      0,
+    );
+  } finally {
+    await context.close();
+  }
+});

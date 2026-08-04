@@ -21,6 +21,7 @@ import { EventController } from "./event-controller.js";
 import { startHttpServer } from "./http.js";
 import { GuildSettingsService } from "./settings.js";
 import { TicketingService } from "./ticketing.js";
+import { WaitlistManager } from "./waitlist.js";
 
 await initializeDatabase(config.databaseUrl);
 const databasePool = createDatabasePool(config.databaseUrl);
@@ -37,7 +38,10 @@ const settings = new GuildSettingsService(store, {
   ...(config.exemptRoleId ? { exemptRoleId: config.exemptRoleId } : {}),
 });
 const audit = new AuditLogger(client, store, settings);
-const refresher = new AnnouncementRefresher(client, store);
+const waitlist = new WaitlistManager(client, store);
+const refresher = new AnnouncementRefresher(client, store, (event, availableSeats) => {
+  void waitlist.promote(event, availableSeats);
+});
 const stripe = new Stripe(config.stripeSecretKey);
 const stripeTestMode =
   config.stripeTestSecretKey && config.stripeTestWebhookSecret

@@ -95,6 +95,12 @@ controller and database.
 
 ### Members
 
+When a capacity-limited event fills, its button becomes **join waitlist**.
+Waitlisted members are offered freed seats in join order by DM, with 24 hours
+to claim before the seat rolls to the next member. Claiming confirms the RSVP
+directly, or opens Stripe Checkout for paid events. Cancellations, refunds,
+and raised capacity all free seats automatically.
+
 Free-event announcements have an **RSVP** button. Selecting it opens a private
 summary containing the schedule and location. Paid events instead have a
 **Buy ticket** button; they do not accept RSVPs. Buying creates a private,
