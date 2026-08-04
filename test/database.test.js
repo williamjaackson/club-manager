@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { newDb } from "pg-mem";
 import {
+  EventAdmissionClosedError,
   EventFinishedError,
   EventUnavailableError,
   RsvpCapacityReachedError,
@@ -291,6 +292,54 @@ test("rejects responses after event and ticket deadlines", async () => {
   }
 });
 
+test("manually closes free RSVPs and paid ticket sales", async () => {
+  const free = await fixture({ ticketLimit: 10 });
+  const paid = await fixture({
+    ticketPriceCents: 1250,
+    ticketCurrency: "aud",
+    ticketLimit: 10,
+  });
+
+  try {
+    for (const context of [free, paid]) {
+      await context.store.claimEventForPublishing(context.event.id);
+      await context.store.finishPublishing(
+        context.event.id,
+        context === free ? "42345678901234567" : "52345678901234567",
+        200,
+      );
+      assert.equal(
+        await context.store.closeEventAdmission(context.event.id, 300),
+        true,
+      );
+      assert.equal(
+        await context.store.closeEventAdmission(context.event.id, 301),
+        false,
+      );
+    }
+
+    await assert.rejects(
+      free.store.confirmRsvp(
+        free.event.id,
+        "62345678901234567",
+        302,
+      ),
+      EventAdmissionClosedError,
+    );
+    await assert.rejects(
+      paid.store.reserveTicketCheckout(
+        paid.event.id,
+        "72345678901234567",
+        302,
+      ),
+      TicketSalesClosedError,
+    );
+  } finally {
+    await free.close();
+    await paid.close();
+  }
+});
+
 test("records admission interest exactly once per member and kind", async () => {
   const context = await fixture();
 
@@ -361,6 +410,17 @@ test("recognizes original announcements and recorded reminder buttons", async ()
         "42345678901234567",
       ))?.id,
       context.event.id,
+    );
+    assert.equal(
+      (await context.store.getEventByAdmissionMessageId(
+        context.event.guild_id,
+        "52345678901234567",
+      ))?.id,
+      context.event.id,
+    );
+    assert.deepEqual(
+      await context.store.getEventReminderMessageIds(context.event.id),
+      ["52345678901234567"],
     );
     assert.equal(
       await context.store.isEventAdmissionMessage(

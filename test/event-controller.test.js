@@ -252,6 +252,95 @@ test("replies to an event announcement with a reusable admission button", async 
   assert.match(confirmation.content, /Sent a reminder/);
 });
 
+test("closes an event from its message context menu and disables its buttons", async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const event = {
+    id: 42,
+    guild_id: "12345678901234567",
+    announcement_channel_id: "22345678901234567",
+    message_id: "32345678901234567",
+    creator_id: "42345678901234567",
+    title: "Context event",
+    schedule_text: "Saturday",
+    location: "Gold Coast",
+    announcement: "Complete announcement.",
+    artwork_url: null,
+    artwork_name: null,
+    ticket_price_cents: null,
+    ticket_currency: null,
+    ticket_limit: 50,
+    test_mode: false,
+    starts_at: now + 3_600,
+    ends_at: null,
+    ticket_sales_close_at: null,
+    status: "published",
+    created_at: now,
+    published_at: now,
+  };
+  const closedEvent = { ...event, ticket_sales_close_at: now };
+  let originalUpdate;
+  let reminderUpdate;
+  let confirmation;
+  const webhook = {
+    name: "Club Manager Event Announcements",
+    owner: { id: "52345678901234567" },
+    token: "webhook-token",
+    isIncoming() { return true; },
+    async editMessage(messageId, options) {
+      assert.equal(messageId, event.message_id);
+      originalUpdate = options;
+    },
+  };
+  const channel = {
+    type: ChannelType.GuildText,
+    async fetchWebhooks() {
+      return { find(predicate) { return predicate(webhook) ? webhook : undefined; } };
+    },
+    messages: {
+      async fetch(messageId) {
+        assert.equal(messageId, "62345678901234567");
+        return { async edit(options) { reminderUpdate = options; } };
+      },
+    },
+  };
+  const controller = new EventController({
+    async getEventByAdmissionMessageId() { return event; },
+    async closeEventAdmission(eventId) {
+      assert.equal(eventId, event.id);
+      return true;
+    },
+    async getEvent() { return closedEvent; },
+    async getEventReminderMessageIds() { return ["62345678901234567"]; },
+  }, {}, {});
+
+  await controller.handleContextMenu({
+    commandName: "Close Event",
+    guildId: event.guild_id,
+    targetMessage: { id: event.message_id },
+    memberPermissions: { has() { return true; } },
+    inGuild() { return true; },
+    client: {
+      user: { id: webhook.owner.id },
+      channels: { async fetch() { return channel; } },
+    },
+    async deferReply(options) {
+      assert.equal(options.flags, MessageFlags.Ephemeral);
+    },
+    async editReply(options) { confirmation = options; },
+  });
+
+  assert.equal(
+    originalUpdate.components[0].components[0].toJSON().disabled,
+    true,
+  );
+  assert.match(originalUpdate.content, /RSVPs close/);
+  assert.equal(
+    reminderUpdate.components[0].components[0].toJSON().disabled,
+    true,
+  );
+  assert.match(confirmation.content, /Closed.*No new RSVPs/i);
+});
+
 test("logs interest but refuses admission buttons after their deadlines", async () => {
   const now = Math.floor(Date.now() / 1000);
   const base = {

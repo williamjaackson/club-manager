@@ -90,6 +90,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (interaction.isChatInputCommand()) {
       await eventController.handleCommand(interaction);
+    } else if (interaction.isMessageContextMenuCommand()) {
+      await eventController.handleContextMenu(interaction);
     } else if (interaction.isModalSubmit()) {
       await eventController.handleModal(interaction);
     } else if (interaction.isButton()) {

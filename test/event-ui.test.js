@@ -201,6 +201,21 @@ test("shows structured event and ticket closing times", () => {
     starts_at: 2_000,
     ends_at: null,
   });
+  const manuallyClosedFreeEvent = {
+    ...event,
+    ticket_price_cents: null,
+    ticket_currency: null,
+    ticket_limit: 25,
+    starts_at: 2_000,
+    ends_at: null,
+    ticket_sales_close_at: 2_500,
+  };
+  const closedFreeMessage = buildPublicEventMessage(manuallyClosedFreeEvent);
+  const closedFreeReminder = buildReminderMessage(
+    manuallyClosedFreeEvent,
+    "Closed",
+    2_600,
+  );
   const reminder = buildReminderMessage(
     timedEvent,
     "@everyone Reminder",
@@ -214,6 +229,11 @@ test("shows structured event and ticket closing times", () => {
   assert.match(freeMessage.content ?? "", /RSVP capacity.*25 people/s);
   assert.match(freeMessage.content ?? "", /RSVPs close.*<t:3000:F>/s);
   assert.doesNotMatch(openEndedMessage.content ?? "", /Finishes|RSVPs close/);
+  assert.match(closedFreeMessage.content ?? "", /RSVPs close.*<t:2500:F>/s);
+  assert.equal(
+    closedFreeReminder.components?.[0]?.components[0]?.toJSON().disabled,
+    true,
+  );
   assert.equal(reminder.content, "@everyone Reminder");
   assert.deepEqual(reminder.allowedMentions?.parse, [
     "everyone",

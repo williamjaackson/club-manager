@@ -49,6 +49,13 @@ to a published announcement. The reminder supports mentions such as `@everyone`
 and repeats the event's trusted RSVP or ticket button. Closed admission buttons
 are shown disabled.
 
+Right-click a published event announcement or one of its reminders and select
+**Apps → Close Event** to stop admission immediately. The administrator-only
+message command closes free RSVPs and paid ticket sales, updates the original
+announcement's close time, and disables admission buttons on the announcement
+and recorded reminders. Buttons that cannot be edited are still refused by the
+controller and database.
+
 ### Members
 
 Free-event announcements have an **RSVP** button. Selecting it opens a private
@@ -62,8 +69,9 @@ charging again.
 RSVP interactions stop at the event finish time when one is set. New ticket
 Checkout links stop at the optional ticket close time, or at finish time when
 no earlier close is set. Events without either deadline remain open. The
-controller and database both enforce these deadlines and capacities, including
-for buttons copied onto reminders.
+context-menu action can close either admission type early. The controller and
+database both enforce these deadlines, manual closures, and capacities,
+including for buttons copied onto reminders.
 
 Stripe's signed webhook is the source of truth for payment fulfillment. The
 success redirect never creates a ticket. Checkout creation and webhook
