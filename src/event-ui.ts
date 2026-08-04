@@ -82,7 +82,7 @@ function scheduleBlock(event: EventRecord, relative: boolean): string {
 
 function locationLine(event: EventRecord): string {
   return event.location_url
-    ? `📍 [**${event.location}**](${event.location_url})`
+    ? `📍 [**${event.location}**](<${event.location_url}>)`
     : `📍 **${event.location}**`;
 }
 
@@ -281,7 +281,7 @@ export function buildWizardHub(pending: PendingEventCreateRecord): EventReplyOpt
   body += pending.location
     ? `📍 ${
         pending.location_url
-          ? `[**${pending.location}**](${pending.location_url})`
+          ? `[**${pending.location}**](<${pending.location_url}>)`
           : `**${pending.location}**`
       }\n`
     : "📍 *Location not set*\n";
