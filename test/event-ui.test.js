@@ -298,11 +298,12 @@ test("shows live attendance and sold-out states on announcements", () => {
 
   assert.match(soldOut.content ?? "", /-# 🎟️ 20 sold · none left/);
   const soldOutButton = soldOut.components?.[0]?.components[0]?.toJSON();
-  assert.equal(soldOutButton?.disabled, true);
-  assert.equal(soldOutButton?.label, "Sold out");
+  assert.ok(!soldOutButton?.disabled);
+  assert.equal(soldOutButton?.label, "Sold out — join waitlist");
+  assert.match(soldOutButton?.custom_id ?? "", /^event:waitlist:/);
 
   const fullButton = freeFull.components?.[0]?.components[0]?.toJSON();
   assert.match(freeFull.content ?? "", /-# 🙋 5 going · none left/);
-  assert.equal(fullButton?.label, "At capacity");
-  assert.equal(fullButton?.disabled, true);
+  assert.equal(fullButton?.label, "At capacity — join waitlist");
+  assert.ok(!fullButton?.disabled);
 });

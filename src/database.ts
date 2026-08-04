@@ -179,6 +179,14 @@ export interface RsvpChange {
   status: RsvpStatus;
 }
 
+export interface WaitlistEntry {
+  event_id: number;
+  user_id: string;
+  created_at: number;
+  offered_at: number | null;
+  offer_expires_at: number | null;
+}
+
 export interface CouponRecord {
   id: number;
   guild_id: string;
@@ -480,6 +488,15 @@ export async function setupDatabase(pool: Pool): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS audit_outbox_pending
         ON audit_outbox (sent_at, next_attempt_at, id);
+
+      CREATE TABLE IF NOT EXISTS event_waitlist (
+        event_id INTEGER NOT NULL REFERENCES events(id),
+        user_id TEXT NOT NULL,
+        created_at DOUBLE PRECISION NOT NULL,
+        offered_at DOUBLE PRECISION,
+        offer_expires_at DOUBLE PRECISION,
+        PRIMARY KEY (event_id, user_id)
+      );
 
       CREATE TABLE IF NOT EXISTS coupons (
         id SERIAL PRIMARY KEY,
@@ -1712,6 +1729,124 @@ export class Store {
     }
   }
 
+  async joinWaitlist(
+    eventId: number,
+    userId: string,
+    now = currentTimestamp(),
+  ): Promise<{ joined: boolean; position: number }> {
+    const existing = await this.getWaitlistEntry(eventId, userId);
+    if (!existing) {
+      await this.#pool.query(
+        `
+          INSERT INTO event_waitlist (event_id, user_id, created_at)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (event_id, user_id) DO NOTHING
+        `,
+        [eventId, userId, now],
+      );
+    }
+    const position = await this.#pool.query(
+      `
+        SELECT COUNT(*)::integer AS count
+        FROM event_waitlist
+        WHERE
+          event_id = $1
+          AND created_at <= (
+            SELECT created_at FROM event_waitlist
+            WHERE event_id = $1 AND user_id = $2
+          )
+      `,
+      [eventId, userId],
+    );
+    return {
+      joined: !existing,
+      position: Number((position.rows[0] as { count: number }).count),
+    };
+  }
+
+  async getWaitlistEntry(
+    eventId: number,
+    userId: string,
+  ): Promise<WaitlistEntry | undefined> {
+    const result = await this.#pool.query(
+      "SELECT * FROM event_waitlist WHERE event_id = $1 AND user_id = $2",
+      [eventId, userId],
+    );
+    return result.rows[0] as WaitlistEntry | undefined;
+  }
+
+  async removeWaitlistEntry(eventId: number, userId: string): Promise<void> {
+    await this.#pool.query(
+      "DELETE FROM event_waitlist WHERE event_id = $1 AND user_id = $2",
+      [eventId, userId],
+    );
+  }
+
+  // Requeues an offer that could not be honoured (spot re-taken before the
+  // member claimed) so the member keeps their place in line.
+  async requeueWaitlistOffer(eventId: number, userId: string): Promise<void> {
+    await this.#pool.query(
+      `
+        UPDATE event_waitlist
+        SET offered_at = NULL, offer_expires_at = NULL
+        WHERE event_id = $1 AND user_id = $2
+      `,
+      [eventId, userId],
+    );
+  }
+
+  // Members whose 24h claim window lapsed lose their place.
+  async expireWaitlistOffers(eventId: number, now = currentTimestamp()): Promise<void> {
+    await this.#pool.query(
+      "DELETE FROM event_waitlist WHERE event_id = $1 AND offer_expires_at <= $2",
+      [eventId, now],
+    );
+  }
+
+  async countActiveWaitlistOffers(
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<number> {
+    const result = await this.#pool.query(
+      `
+        SELECT COUNT(*)::integer AS count
+        FROM event_waitlist
+        WHERE event_id = $1 AND offer_expires_at > $2
+      `,
+      [eventId, now],
+    );
+    return Number((result.rows[0] as { count: number }).count);
+  }
+
+  async nextWaitlistCandidates(eventId: number, limit: number): Promise<WaitlistEntry[]> {
+    const result = await this.#pool.query(
+      `
+        SELECT * FROM event_waitlist
+        WHERE event_id = $1 AND offered_at IS NULL
+        ORDER BY created_at, user_id
+        LIMIT $2
+      `,
+      [eventId, limit],
+    );
+    return result.rows as WaitlistEntry[];
+  }
+
+  async markWaitlistOffered(
+    eventId: number,
+    userId: string,
+    offerExpiresAt: number,
+    now = currentTimestamp(),
+  ): Promise<void> {
+    await this.#pool.query(
+      `
+        UPDATE event_waitlist
+        SET offered_at = $1, offer_expires_at = $2
+        WHERE event_id = $3 AND user_id = $4
+      `,
+      [now, offerExpiresAt, eventId, userId],
+    );
+  }
+
   async createCoupon(
     coupon: {
       guildId: string;
@@ -2016,6 +2151,7 @@ export class Store {
       await client.query("BEGIN");
       await client.query("DELETE FROM audit_outbox WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM coupons WHERE event_id = $1", [eventId]);
+      await client.query("DELETE FROM event_waitlist WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM ticket_orders WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM rsvps WHERE event_id = $1", [eventId]);
       await client.query("DELETE FROM rsvp_history WHERE event_id = $1", [eventId]);

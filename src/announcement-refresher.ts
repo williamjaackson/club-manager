@@ -1,5 +1,5 @@
 import type { Client } from "discord.js";
-import type { Store } from "./database.js";
+import type { EventRecord, Store } from "./database.js";
 import { buildAdmissionComponents, buildEventAnnouncementText } from "./event-ui.js";
 import { fetchEventChannel, findOrCreateEventWebhook } from "./event-webhook.js";
 
@@ -9,13 +9,19 @@ import { fetchEventChannel, findOrCreateEventWebhook } from "./event-webhook.js"
 export class AnnouncementRefresher {
   readonly #client: Client;
   readonly #store: Store;
+  readonly #onSeatsAvailable: (event: EventRecord, availableSeats: number) => void;
   readonly #dirty = new Set<number>();
   #timer: NodeJS.Timeout | undefined;
   #running = false;
 
-  constructor(client: Client, store: Store) {
+  constructor(
+    client: Client,
+    store: Store,
+    onSeatsAvailable: (event: EventRecord, availableSeats: number) => void = () => {},
+  ) {
     this.#client = client;
     this.#store = store;
+    this.#onSeatsAvailable = onSeatsAvailable;
   }
 
   start(intervalMs = 20_000): void {
@@ -61,6 +67,14 @@ export class AnnouncementRefresher {
     if (!this.#client.user) return;
 
     const attendance = await this.#store.getEventAttendance(eventId);
+    if (
+      typeof event.ticket_limit === "number" &&
+      event.cancelled_at === null &&
+      attendance.going < event.ticket_limit
+    ) {
+      this.#onSeatsAvailable(event, event.ticket_limit - attendance.going);
+    }
+
     const channel = await fetchEventChannel(this.#client, event.announcement_channel_id);
     if (!channel) throw new Error("announcement channel unavailable");
 
