@@ -13,6 +13,7 @@ export const configIds = {
   connectedRole: "config-connected-role",
   exemptRole: "config-exempt-role",
   verificationUrl: "config-verification-url",
+  reimbursementChannel: "config-reimbursement-channel",
 } as const;
 
 export const configModalId = "config:settings";
@@ -45,6 +46,16 @@ export function buildConfigModal(current: ResolvedGuildSettings): ModalBuilder {
     exemptRole.setDefaultRoles(current.exemptRoleId);
   }
 
+  const reimbursementChannel = new ChannelSelectMenuBuilder()
+    .setCustomId(configIds.reimbursementChannel)
+    .setChannelTypes(ChannelType.GuildText)
+    .setRequired(false)
+    .setMinValues(0)
+    .setMaxValues(1);
+  if (current.reimbursementLogChannelId) {
+    reimbursementChannel.setDefaultChannels(current.reimbursementLogChannelId);
+  }
+
   const verificationUrl = new TextInputBuilder()
     .setCustomId(configIds.verificationUrl)
     .setStyle(TextInputStyle.Short)
@@ -75,6 +86,10 @@ export function buildConfigModal(current: ResolvedGuildSettings): ModalBuilder {
         .setLabel("Verification message link (optional)")
         .setDescription("Unverified members are pointed at this message.")
         .setTextInputComponent(verificationUrl),
+      new LabelBuilder()
+        .setLabel("Reimbursement log channel (optional)")
+        .setDescription("Receipts and reimbursement activity are posted here.")
+        .setChannelSelectMenuComponent(reimbursementChannel),
     );
 }
 
@@ -86,6 +101,7 @@ export function describeSettings(settings: ResolvedGuildSettings): string {
     `Verified role: ${settings.connectedRoleId ? `<@&${settings.connectedRoleId}>` : "not set (verification disabled)"}`,
     `Exempt role: ${settings.exemptRoleId ? `<@&${settings.exemptRoleId}>` : "not set"}`,
     `Verification message: ${settings.verificationMessageUrl ?? "not set"}`,
+    `Reimbursement log channel: ${settings.reimbursementLogChannelId ? `<#${settings.reimbursementLogChannelId}>` : "not set"}`,
   ];
   return lines.join("\n");
 }
