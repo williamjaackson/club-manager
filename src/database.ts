@@ -2219,6 +2219,54 @@ export class Store {
     };
   }
 
+  // The next moment this event's public state changes by time alone: a
+  // hold or checkout reservation expiring, admission closing, or the event
+  // finishing. Used to schedule announcement re-renders.
+  async getNextEventTransition(
+    eventId: number,
+    now = currentTimestamp(),
+  ): Promise<number | undefined> {
+    const [event, reservation] = await Promise.all([
+      this.#getEvent(this.#pool, eventId),
+      this.#pool.query(
+        `
+          SELECT MIN(reservation_expires_at) AS next
+          FROM ticket_orders
+          WHERE event_id = $1 AND status = 'pending' AND reservation_expires_at > $2
+        `,
+        [eventId, now],
+      ),
+    ]);
+    if (!event) return undefined;
+
+    const candidates: number[] = [];
+    const nextReservation = (reservation.rows[0] as { next: number | null }).next;
+    if (nextReservation !== null) candidates.push(Number(nextReservation));
+    if (
+      typeof event.ticket_sales_close_at === "number" &&
+      event.ticket_sales_close_at > now
+    ) {
+      candidates.push(event.ticket_sales_close_at);
+    }
+    if (typeof event.ends_at === "number" && event.ends_at > now) {
+      candidates.push(event.ends_at);
+    }
+    return candidates.length > 0 ? Math.min(...candidates) : undefined;
+  }
+
+  async getActivePublishedEventIds(limit = 100): Promise<number[]> {
+    const result = await this.#pool.query(
+      `
+        SELECT id FROM events
+        WHERE status = 'published' AND message_id IS NOT NULL AND cancelled_at IS NULL
+        ORDER BY id DESC
+        LIMIT $1
+      `,
+      [limit],
+    );
+    return (result.rows as { id: number }[]).map(({ id }) => id);
+  }
+
   async previewPriceDropRefunds(
     eventId: number,
     newPriceCents: number,
